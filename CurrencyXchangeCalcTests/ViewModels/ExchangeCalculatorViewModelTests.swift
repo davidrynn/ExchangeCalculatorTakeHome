@@ -285,6 +285,23 @@ struct ExchangeCalculatorViewModelTests {
     }
 
     @Test
+    func clampDropsRepeatedSeparators() {
+        // Regression: previously this produced "1.2." (malformed).
+        let us = Locale(identifier: "en_US")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.2.3", locale: us) == "1.23")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.2.3.4", locale: us) == "1.23")
+        let spain = Locale(identifier: "es_ES")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1,2,3", locale: spain) == "1,23")
+    }
+
+    @Test
+    func clampHandlesNegativeAndLeadingSeparator() {
+        let us = Locale(identifier: "en_US")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("-1.234", locale: us) == "-1.23")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces(".5", locale: us) == ".5")
+    }
+
+    @Test
     func usdcChangedClampsInputInPlace() async {
         let (vm, _) = await makeVM()
         vm.usdcAmountChanged("1.2345")

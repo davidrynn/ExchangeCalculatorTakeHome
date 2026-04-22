@@ -55,6 +55,7 @@ struct ExchangeCalculatorView: View {
             if viewModel.isLoading {
                 ProgressView()
                     .accessibilityIdentifier("loadingIndicator")
+                    .accessibilityLabel("Loading exchange rates")
             }
         }
         .toolbar {

@@ -264,20 +264,28 @@ final class ExchangeCalculatorViewModel {
 
     /// Clamps user-typed text to at most 2 decimal places. Preserves
     /// partial input like `"1."` or `""` (typing in progress).
-    /// Locale-aware: honors the current decimal separator.
+    /// Locale-aware: honors the current decimal separator and also
+    /// accepts an ASCII dot on comma-locale keyboards.
+    ///
+    /// If the input contains more than one separator (e.g. `"1.2.3"`)
+    /// only the first one is kept; extras are dropped. This makes the
+    /// output well-formed even for malformed keystrokes.
     static func clampToTwoDecimalPlaces(_ input: String, locale: Locale = .current) -> String {
-        let separator = locale.decimalSeparator ?? "."
-        // Also accept ASCII dot on comma-locale keyboards.
+        let localeSeparator = locale.decimalSeparator ?? "."
+        // Pick whichever separator the user actually typed.
         let effectiveSeparator: String = {
-            if separator != "." && input.contains(separator) { return separator }
+            if localeSeparator != "." && input.contains(localeSeparator) { return localeSeparator }
             if input.contains(".") { return "." }
-            return separator
+            return localeSeparator
         }()
-        guard let range = input.range(of: effectiveSeparator) else { return input }
-        let fractional = input[range.upperBound...]
-        if fractional.count <= 2 { return input }
-        let allowed = fractional.prefix(2)
-        return String(input[..<range.upperBound]) + allowed
+        guard let firstRange = input.range(of: effectiveSeparator) else { return input }
+        // Integer part is everything before the first separator (preserved as-is).
+        let integerPart = String(input[..<firstRange.upperBound])
+        // Fractional side: strip any additional separators so "1.2.3" → "23"
+        // before truncating to 2 chars.
+        let rawFractional = input[firstRange.upperBound...]
+        let sanitizedFractional = rawFractional.replacingOccurrences(of: effectiveSeparator, with: "")
+        return integerPart + sanitizedFractional.prefix(2)
     }
 
     /// Matches `[-]? digits [. digits]?` — a plain decimal number with
