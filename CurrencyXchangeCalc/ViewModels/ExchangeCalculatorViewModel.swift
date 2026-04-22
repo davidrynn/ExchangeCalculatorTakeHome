@@ -48,8 +48,10 @@ final class ExchangeCalculatorViewModel {
 
     /// Monotonically-increasing token bumped on each `loadRates` call.
     /// Guards against an older in-flight fetch clobbering newer state if
-    /// overlapping calls ever occur. In practice SwiftUI `.task(id:)`
-    /// prevents overlap structurally — this is a belt-and-suspenders layer.
+    /// overlapping calls ever occur. In the current view layer SwiftUI
+    /// `.task(id:)` is the sole cancellation boundary (both currency
+    /// changes and Retry go through a composite id), so this is
+    /// defense-in-depth for direct callers (tests, future flows).
     private var loadGeneration: UInt64 = 0
 
     // MARK: - Init
@@ -133,11 +135,11 @@ final class ExchangeCalculatorViewModel {
     }
 
     /// Fetches the list of supported foreign currencies from the API and
-    /// merges it with `Currency.fallbackList`. Silently falls back to
-    /// the hardcoded list when the endpoint is unavailable (the
-    /// `tickers-currencies` API is not yet deployed as of 2026-04).
-    /// Never surfaces an error for this path — currency metadata is
-    /// non-critical.
+    /// merges it with `Currency.fallbackList`. Falls back silently when
+    /// the endpoint isn't deployed (`ServiceError.unavailable`) or the
+    /// device has a transport failure (`URLError`). **Decoding errors
+    /// and unexpected failures propagate** via `errorMessage` so
+    /// programmer bugs are not silently swallowed.
     ///
     /// Intended to be called once when the view appears.
     func loadAvailableCurrencies() async {
@@ -152,9 +154,22 @@ final class ExchangeCalculatorViewModel {
                 existing[code] ?? Currency(code: code, flagEmoji: "🏳️", displayName: code)
             }
             availableCurrencies = merged.isEmpty ? Currency.fallbackList : merged
-        } catch {
-            // Silent fallback — `tickers-currencies` is not guaranteed to exist.
+        } catch ServiceError.unavailable {
+            // Expected — endpoint not deployed yet. Fall back silently.
             availableCurrencies = Currency.fallbackList
+        } catch is CancellationError {
+            // Structured cancellation — don't touch state.
+        } catch let urlError as URLError {
+            // Transport failure (offline, DNS, etc). Non-critical for
+            // the currency list; fall back silently.
+            _ = urlError
+            availableCurrencies = Currency.fallbackList
+        } catch {
+            // Decoding errors and anything else — surface, because these
+            // indicate a real bug (schema mismatch, programmer error)
+            // rather than a missing endpoint.
+            availableCurrencies = Currency.fallbackList
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
