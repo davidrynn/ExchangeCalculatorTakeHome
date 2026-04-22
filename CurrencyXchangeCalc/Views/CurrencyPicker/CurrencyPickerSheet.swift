@@ -4,7 +4,7 @@ import SwiftUI
 struct CurrencyPickerSheet: View {
     let currencies: [Currency]
     let selectedCurrency: Currency
-    let onSelect: (Currency) -> Void
+    let onSelect: (Currency) -> Void // Why do we have a closure instead of state based property and custom bindings?
 
     var body: some View {
         List(currencies) { currency in

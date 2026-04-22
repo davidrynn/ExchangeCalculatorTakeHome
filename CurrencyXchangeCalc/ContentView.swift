@@ -1,21 +1,10 @@
-//
-//  ContentView.swift
-//  CurrencyXchangeCalc
-//
-//  Created by David Rynn on 4/22/26.
-//
-
 import SwiftUI
 
+/// App root. Phase 3 hosts the calculator directly; Phase 5 will inject
+/// a configured `LiveExchangeRateService` here.
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
+        ExchangeCalculatorView()
     }
 }
 

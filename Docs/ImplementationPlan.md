@@ -40,9 +40,22 @@ main  ────────────────────────�
 - Each phase lives on its own branch off `main`.
 - Before opening the phase PR: rebase or merge latest `main` into the branch so PRs diff cleanly and avoid pile-up conflicts across phases.
 - Open a self-review PR before merging; all tests must pass.
-- Merge to `main` only after: ✅ build passes, ✅ tests pass, ✅ manual simulator smoke-test done.
+- Merge to `main` only after: ✅ build passes, ✅ tests pass, ✅ manual simulator smoke-test done, ✅ codex review completed (see below).
 - Tag `v1.0.0` on `main` before submission.
 - Commit messages: `feat:`, `fix:`, `test:`, `docs:`, `polish:` prefixes.
+
+### Per-phase workflow (mandatory)
+
+Every phase follows this exact sequence. Do not skip the codex review step:
+
+1. Branch off latest `main` → implement → tests green → commit.
+2. **Codex review** of the phase commit(s). Resume the existing codex review thread if one is already running; otherwise start a new review, pointing at the phase commit hash(es) and the relevant plan section. Default settings: a reasoning-capable Codex model, high reasoning effort, read-only sandbox — adjust as needed.
+3. Evaluate critiques directly. For each: agree/disagree with reasoning. Apply fixes as new commits, rerun tests.
+4. Summarize the review outcome (table of severity / issue / fix) to the user.
+5. Ask for sign-off to merge to `main`.
+6. Merge (`--no-ff`) and move to next phase.
+
+The codex review has caught real bugs that local tests didn't: inverted bid/ask formulas, `Decimal(string:)` silently parsing `"1.2.3"` as `1.2`, a no-op binding setter causing TextField/VM divergence after swap, and an accessibility identifier attached to the wrong element. Treat it as a required gate, not an optional polish step.
 
 ---
 

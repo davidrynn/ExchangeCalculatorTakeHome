@@ -3,7 +3,7 @@ import SwiftUI
 /// A single row in the currency picker list.
 struct CurrencyPickerRow: View {
     let currency: Currency
-    let isSelected: Bool
+    let isSelected: Bool // Should this be state based?
 
     var body: some View {
         HStack {
