@@ -74,16 +74,23 @@ struct CurrencyInputRow: View {
         .accessibilityElement(children: .combine)
 
         if isTappable, let onTapCurrency {
-            Button(action: onTapCurrency) {
+            let button = Button(action: onTapCurrency) {
                 content
             }
             .buttonStyle(.plain)
             // Attach the identifier to the tappable Button so UI tests
             // can locate it via `app.buttons["foreignCurrencyPicker"]`.
-            .accessibilityIdentifier(currencyLabelIdentifier ?? "")
+            if let id = currencyLabelIdentifier {
+                button.accessibilityIdentifier(id)
+            } else {
+                button
+            }
         } else {
-            content
-                .accessibilityIdentifier(currencyLabelIdentifier ?? "")
+            if let id = currencyLabelIdentifier {
+                content.accessibilityIdentifier(id)
+            } else {
+                content
+            }
         }
     }
 

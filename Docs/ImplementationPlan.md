@@ -49,7 +49,7 @@ main  ────────────────────────�
 Every phase follows this exact sequence. Do not skip the codex review step:
 
 1. Branch off latest `main` → implement → tests green → commit.
-2. **Codex review** of the phase commit(s) via `codex exec resume --last` (model `gpt-5.3-codex`, `high` reasoning, read-only sandbox). Ask it to review the commit hash(es) against the phase's plan section.
+2. **Codex review** of the phase commit(s). Resume the existing codex review thread if one is already running; otherwise start a new review, pointing at the phase commit hash(es) and the relevant plan section. Default settings: a reasoning-capable Codex model, high reasoning effort, read-only sandbox — adjust as needed.
 3. Evaluate critiques directly. For each: agree/disagree with reasoning. Apply fixes as new commits, rerun tests.
 4. Summarize the review outcome (table of severity / issue / fix) to the user.
 5. Ask for sign-off to merge to `main`.
