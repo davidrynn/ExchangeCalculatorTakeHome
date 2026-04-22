@@ -46,6 +46,12 @@ final class ExchangeCalculatorViewModel {
     /// successful `loadRates`.
     private(set) var currentRate: ExchangeRate?
 
+    /// `false` (default): USDc row on top, foreign row on bottom.
+    /// `true`: foreign row on top, USDc row on bottom. Toggled by
+    /// `swapCurrencies()`. Purely a display-position flag — the
+    /// amount/currency associations do not change.
+    var isSwapped: Bool = false
+
     /// Monotonically-increasing token bumped on each `loadRates` call.
     /// Guards against an older in-flight fetch clobbering newer state if
     /// overlapping calls ever occur. In the current view layer SwiftUI
@@ -109,17 +115,12 @@ final class ExchangeCalculatorViewModel {
 
     // MARK: - Commands
 
-    /// Swaps the two displayed amount strings.
-    ///
-    /// This is a visual-only swap — it does **not** recompute using the
-    /// current rate, and the currency assignments stay the same (USDc is
-    /// always USDc). If the product intent later changes to "flip which
-    /// side is authoritative and recompute the other," this function will
-    /// need a direction-state companion; today the plan says swap amounts.
+    /// Toggles `isSwapped` so the view flips which row is on top.
+    /// Amounts and currency associations stay with their rows — the USDc
+    /// amount is still the USDc amount, and the foreign amount is still
+    /// the foreign amount. Only their layout position changes.
     func swapCurrencies() {
-        let temp = usdcAmount
-        usdcAmount = foreignAmount
-        foreignAmount = temp
+        isSwapped.toggle()
     }
 
     /// Sets the selected foreign currency and invalidates any stale rate.

@@ -120,31 +120,44 @@ struct ExchangeCalculatorView: View {
     private var amountStack: some View {
         ZStack {
             VStack(spacing: 16) {
-                CurrencyInputRow(
-                    currency: Self.usdcCurrency,
-                    isTappable: false,
-                    amount: Binding(
-                        get: { viewModel.usdcAmount },
-                        set: { viewModel.usdcAmountChanged($0) }
-                    ),
-                    amountFieldIdentifier: "usdcAmountField"
-                )
-                CurrencyInputRow(
-                    currency: viewModel.selectedCurrency,
-                    isTappable: true,
-                    amount: Binding(
-                        get: { viewModel.foreignAmount },
-                        set: { viewModel.foreignAmountChanged($0) }
-                    ),
-                    amountFieldIdentifier: "foreignAmountField",
-                    currencyLabelIdentifier: "foreignCurrencyPicker",
-                    onTapCurrency: {
-                        isCurrencyPickerPresented = true
-                    }
-                )
+                if viewModel.isSwapped {
+                    foreignRow
+                    usdcRow
+                } else {
+                    usdcRow
+                    foreignRow
+                }
             }
             SwapButton(action: { viewModel.swapCurrencies() })
         }
+    }
+
+    private var usdcRow: some View {
+        CurrencyInputRow(
+            currency: Self.usdcCurrency,
+            isTappable: false,
+            amount: Binding(
+                get: { viewModel.usdcAmount },
+                set: { viewModel.usdcAmountChanged($0) }
+            ),
+            amountFieldIdentifier: "usdcAmountField"
+        )
+    }
+
+    private var foreignRow: some View {
+        CurrencyInputRow(
+            currency: viewModel.selectedCurrency,
+            isTappable: true,
+            amount: Binding(
+                get: { viewModel.foreignAmount },
+                set: { viewModel.foreignAmountChanged($0) }
+            ),
+            amountFieldIdentifier: "foreignAmountField",
+            currencyLabelIdentifier: "foreignCurrencyPicker",
+            onTapCurrency: {
+                isCurrencyPickerPresented = true
+            }
+        )
     }
 
     private func errorBanner(message: String) -> some View {

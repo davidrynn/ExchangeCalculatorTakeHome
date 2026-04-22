@@ -63,13 +63,25 @@ struct ExchangeCalculatorViewModelTests {
     // MARK: - Swap
 
     @Test
-    func swapExchangesAmounts() async {
+    func swapTogglesIsSwappedFlag() async {
+        let (vm, _) = await makeVM()
+        #expect(vm.isSwapped == false, "Defaults to USDc-on-top")
+        vm.swapCurrencies()
+        #expect(vm.isSwapped == true)
+        vm.swapCurrencies()
+        #expect(vm.isSwapped == false)
+    }
+
+    @Test
+    func swapDoesNotMutateAmounts() async {
+        // Rows move as atomic units — the USDc amount stays the USDc amount
+        // regardless of display position.
         let (vm, _) = await makeVM()
         vm.usdcAmount = "1.00"
         vm.foreignAmount = "18.41"
         vm.swapCurrencies()
-        #expect(vm.usdcAmount == "18.41")
-        #expect(vm.foreignAmount == "1.00")
+        #expect(vm.usdcAmount == "1.00")
+        #expect(vm.foreignAmount == "18.41")
     }
 
     // MARK: - Currency selection
