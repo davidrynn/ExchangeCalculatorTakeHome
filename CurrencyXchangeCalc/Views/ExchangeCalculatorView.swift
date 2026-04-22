@@ -40,6 +40,16 @@ struct ExchangeCalculatorView: View {
                     .accessibilityIdentifier("loadingIndicator")
             }
         }
+        // Load the currency list once on appear. Silent fallback on error.
+        .task {
+            await viewModel.loadAvailableCurrencies()
+        }
+        // Rate fetch is keyed by selected currency code. Changing currency
+        // cancels the prior in-flight task and starts a new one —
+        // stale-response protection is structural, not manual.
+        .task(id: viewModel.selectedCurrency.code) {
+            await viewModel.loadRates()
+        }
         .sheet(isPresented: $isCurrencyPickerPresented) {
             // Bind selection through a wrapper that routes writes through
             // `viewModel.selectCurrency(_:)` so the VM's side effects
@@ -120,7 +130,17 @@ struct ExchangeCalculatorView: View {
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(2)
-                Spacer()
+                Spacer(minLength: 8)
+                Button("Retry") {
+                    viewModel.errorMessage = nil
+                    Task { await viewModel.loadRates() }
+                }
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.white.opacity(0.25), in: Capsule())
+                .accessibilityIdentifier("errorRetry")
                 Button {
                     viewModel.errorMessage = nil
                 } label: {
@@ -128,6 +148,7 @@ struct ExchangeCalculatorView: View {
                         .foregroundStyle(.white.opacity(0.9))
                 }
                 .accessibilityLabel("Dismiss error")
+                .accessibilityIdentifier("errorDismiss")
             }
             .padding(12)
             .background(Color.red.opacity(0.9), in: RoundedRectangle(cornerRadius: 12))

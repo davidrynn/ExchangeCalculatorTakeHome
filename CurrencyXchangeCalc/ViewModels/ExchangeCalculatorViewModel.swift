@@ -132,6 +132,32 @@ final class ExchangeCalculatorViewModel {
         }
     }
 
+    /// Fetches the list of supported foreign currencies from the API and
+    /// merges it with `Currency.fallbackList`. Silently falls back to
+    /// the hardcoded list when the endpoint is unavailable (the
+    /// `tickers-currencies` API is not yet deployed as of 2026-04).
+    /// Never surfaces an error for this path — currency metadata is
+    /// non-critical.
+    ///
+    /// Intended to be called once when the view appears.
+    func loadAvailableCurrencies() async {
+        do {
+            let codes = try await service.fetchCurrencies()
+            if Task.isCancelled { return }
+            // Preserve flag + display name from fallback metadata when a
+            // server code matches; anything novel is appended with best-
+            // effort labels.
+            let existing = Dictionary(uniqueKeysWithValues: Currency.fallbackList.map { ($0.code, $0) })
+            let merged: [Currency] = codes.map { code in
+                existing[code] ?? Currency(code: code, flagEmoji: "🏳️", displayName: code)
+            }
+            availableCurrencies = merged.isEmpty ? Currency.fallbackList : merged
+        } catch {
+            // Silent fallback — `tickers-currencies` is not guaranteed to exist.
+            availableCurrencies = Currency.fallbackList
+        }
+    }
+
     /// Fetches the latest rate for `selectedCurrency`. Intended to be
     /// invoked by SwiftUI's `.task(id: selectedCurrency.code)` in Phase 5.
     ///

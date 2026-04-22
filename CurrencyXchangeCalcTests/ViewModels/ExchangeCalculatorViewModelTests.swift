@@ -257,6 +257,39 @@ struct ExchangeCalculatorViewModelTests {
         #expect(vm.errorMessage == nil)
     }
 
+    // MARK: - Currency list fallback
+
+    @Test
+    func loadAvailableCurrenciesFallsBackSilentlyOnServiceError() async {
+        let mock = MockExchangeRateService()
+        mock.shouldThrow = true
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: Currency.fallbackList[0])
+
+        await vm.loadAvailableCurrencies()
+
+        #expect(vm.availableCurrencies == Currency.fallbackList,
+                "Should fall back to Currency.fallbackList when fetchCurrencies throws")
+        #expect(vm.errorMessage == nil,
+                "Currency-list failure is non-critical and must not surface a user error")
+    }
+
+    @Test
+    func loadAvailableCurrenciesMergesServerCodesWithFallbackMetadata() async {
+        let mock = MockExchangeRateService()
+        // Server returns a subset of fallback codes; expect them merged with
+        // the fallback metadata (flag + display name).
+        mock.stubbedCurrencies = ["ARS", "BRL"]
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: Currency.fallbackList[0])
+
+        await vm.loadAvailableCurrencies()
+
+        #expect(vm.availableCurrencies.count == 2)
+        #expect(vm.availableCurrencies.map(\.code) == ["ARS", "BRL"])
+        // Metadata preserved from fallback.
+        #expect(vm.availableCurrencies[0].displayName == "Argentine Peso")
+        #expect(vm.availableCurrencies[0].flagEmoji == "🇦🇷")
+    }
+
     @Test
     func overlappingLoadRatesDoesNotCommitOlderResult() async {
         // Two back-to-back loads: the older call must not clobber state.
