@@ -1,8 +1,12 @@
 import Foundation
 
 /// Errors surfaced by `LiveExchangeRateService`.
+///
+/// `CancellationError` is **not** wrapped — it passes through so that
+/// structured-concurrency cancellation (e.g. SwiftUI `.task(id:)`) works
+/// without being surfaced as a user-visible error.
 nonisolated enum ServiceError: Error, LocalizedError, Sendable {
-    /// Underlying `URLSession` / transport failure.
+    /// Underlying `URLSession` / transport failure (timeout, DNS, offline).
     case networkError(String)
 
     /// Response decoded incorrectly (shape, types, or quoted-decimal parse).
@@ -26,14 +30,13 @@ nonisolated enum ServiceError: Error, LocalizedError, Sendable {
 
 /// Live implementation backed by `URLSession`.
 ///
-/// Marked `nonisolated` so network I/O runs off the main thread despite the
-/// project-wide `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` setting. Has no
-/// mutable state so `Sendable` conformance is implicit (final class + no
-/// stored mutable properties).
-nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
+/// `nonisolated` so network I/O runs off the main thread despite the
+/// project-wide `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` setting. Final
+/// class with only `Sendable` stored properties, so the explicit `Sendable`
+/// conformance is trivially safe.
+nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol, Sendable {
     private let session: URLSession
     private let baseURL: URL
-    private let decoder: JSONDecoder
 
     init(
         session: URLSession = .shared,
@@ -41,14 +44,16 @@ nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
     ) {
         self.session = session
         self.baseURL = baseURL
-        self.decoder = JSONDecoder()
     }
 
     /// Fetches tickers for the given list of foreign currencies.
     ///
-    /// - Parameter currencies: ISO codes (e.g. `["MXN", "ARS"]`). Must be non-empty.
+    /// - Parameter currencies: ISO codes (e.g. `["MXN", "ARS"]`). Returns
+    ///   an empty array immediately if the list is empty.
     /// - Returns: Array of `ExchangeRate` — one per currency the server returns.
-    /// - Throws: `ServiceError.networkError`, `.httpStatus`, `.decodingError`.
+    /// - Throws: `ServiceError` on network/decoding/HTTP failures;
+    ///   `CancellationError` passes through unchanged when the caller's
+    ///   task is cancelled.
     func fetchRates(for currencies: [String]) async throws -> [ExchangeRate] {
         guard !currencies.isEmpty else { return [] }
 
@@ -60,19 +65,15 @@ nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
 
         let (data, response) = try await performRequest(url: url)
         try validateHTTPResponse(response)
-
-        do {
-            return try decoder.decode([ExchangeRate].self, from: data)
-        } catch {
-            throw ServiceError.decodingError(error.localizedDescription)
-        }
+        return try decode([ExchangeRate].self, from: data)
     }
 
     /// Fetches the list of supported foreign currency codes.
     ///
     /// - Returns: ISO codes (e.g. `["MXN", "ARS", "BRL", "COP"]`).
-    /// - Throws: `ServiceError.unavailable` when the endpoint is not yet deployed
-    ///   (caller should fall back to `Currency.fallbackList`).
+    /// - Throws: `ServiceError.unavailable` when the endpoint is not yet
+    ///   deployed (caller should fall back to `Currency.fallbackList`);
+    ///   `CancellationError` passes through unchanged.
     func fetchCurrencies() async throws -> [String] {
         let url = baseURL.appendingPathComponent("tickers-currencies")
         let (data, response) = try await performRequest(url: url)
@@ -81,11 +82,7 @@ nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
             throw ServiceError.unavailable
         }
 
-        do {
-            return try decoder.decode([String].self, from: data)
-        } catch {
-            throw ServiceError.decodingError(error.localizedDescription)
-        }
+        return try decode([String].self, from: data)
     }
 
     // MARK: - Private
@@ -93,6 +90,10 @@ nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
     private func performRequest(url: URL) async throws -> (Data, URLResponse) {
         do {
             return try await session.data(from: url)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
         } catch {
             throw ServiceError.networkError(error.localizedDescription)
         }
@@ -102,6 +103,16 @@ nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
         guard let http = response as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else {
             throw ServiceError.httpStatus(http.statusCode)
+        }
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        do {
+            // Decoder is local per call — avoids sharing a reference-type
+            // decoder across concurrent requests.
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            throw ServiceError.decodingError(error.localizedDescription)
         }
     }
 }

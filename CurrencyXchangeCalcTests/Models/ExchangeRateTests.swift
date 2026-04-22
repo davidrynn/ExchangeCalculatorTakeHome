@@ -38,6 +38,33 @@ struct ExchangeRateTests {
         #expect(rates[1].bid == Decimal(string: "1539.4290300000")!)
     }
 
+    /// Regression test with values that specifically survive a Double round-trip badly.
+    /// `0.1234567891` and `1.0000000001` both mutate through Double to a
+    /// different Decimal. If the decoder ever regresses to String → Double
+    /// → Decimal, this test fails loudly.
+    @Test
+    func decimalsResistDoubleRoundTripCorruption() throws {
+        let nastyJSON = """
+        [{
+          "ask": "0.1234567891",
+          "bid": "1.0000000001",
+          "book": "usdc_xyz",
+          "date": ""
+        }]
+        """.data(using: .utf8)!
+
+        let rates = try JSONDecoder().decode([ExchangeRate].self, from: nastyJSON)
+        #expect(rates[0].ask == Decimal(string: "0.1234567891")!)
+        #expect(rates[0].bid == Decimal(string: "1.0000000001")!)
+
+        // Sanity: verify these values ARE mangled by Double — if this ever
+        // starts succeeding, Apple's Double precision changed and the test
+        // above is no longer a meaningful regression guard.
+        let doubleCorrupted = Decimal(Double("0.1234567891")!)
+        #expect(doubleCorrupted != Decimal(string: "0.1234567891")!,
+                "Precision test is only meaningful while Double mangles this value.")
+    }
+
     @Test
     func currencyCodeExtractedFromBook() {
         let rate = ExchangeRate(ask: 1, bid: 1, book: "usdc_mxn", date: "")

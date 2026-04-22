@@ -182,7 +182,8 @@ nonisolated struct Currency: Identifiable, Hashable, Sendable {
 **`ExchangeRate`**
 ```swift
 /// Raw ticker from GET /v1/tickers.
-nonisolated struct ExchangeRate: Codable, Equatable, Sendable {
+/// Decodable only — we never encode these back to JSON.
+nonisolated struct ExchangeRate: Decodable, Equatable, Sendable {
     let ask: Decimal    // price to BUY USDc (pay `ask` units of foreign per 1 USDc)
     let bid: Decimal    // price to SELL USDc (receive `bid` units of foreign per 1 USDc)
     let book: String    // e.g. "usdc_mxn"
@@ -227,7 +228,7 @@ nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
 
 ### Checklist
 - [ ] `Currency` model (`nonisolated`, `Sendable`) with `fallbackList` (MXN, ARS, BRL, COP + flag emojis)
-- [ ] `ExchangeRate` Codable model (`nonisolated`, `Sendable`); `currencyCode` computed from `book`
+- [ ] `ExchangeRate` Decodable model (`nonisolated`, `Sendable`, not Codable — we never encode); `currencyCode` computed from `book`
 - [ ] **`ExchangeRate` custom `Decodable` / property wrapper** to decode quoted-string numbers in the API response (`"ask": "18.4105000000"`) into `Decimal` via `Decimal(string:)` — never route through `Double`, which loses precision at the 10-digit fraction
 - [ ] `ConversionDirection` enum (`nonisolated`, `Sendable`)
 - [ ] `ExchangeRateServiceProtocol: Sendable` with two `nonisolated async` methods
