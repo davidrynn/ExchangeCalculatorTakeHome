@@ -84,6 +84,23 @@ struct ExchangeCalculatorViewModelTests {
         #expect(vm.foreignAmount == "18.41")
     }
 
+    @Test
+    func editingAfterSwapUpdatesCurrencyBoundFieldNotVisualPosition() async {
+        // Lock in: after swap, `usdcAmountChanged` still drives the
+        // foreign amount via × bid (USDc→foreign math), regardless of
+        // which row is displayed on top. Rows are a view concern; the
+        // VM's input handlers stay currency-bound.
+        let (vm, _) = await makeVM(
+            ask: Decimal(string: "20")!,
+            bid: Decimal(string: "10")!
+        )
+        vm.swapCurrencies()
+        #expect(vm.isSwapped == true)
+        vm.usdcAmountChanged("2")
+        #expect(vm.usdcAmount == "2")
+        #expect(vm.foreignAmount == "20.00", "USDc→foreign still uses × bid (2 × 10 = 20)")
+    }
+
     // MARK: - Currency selection
 
     @Test
