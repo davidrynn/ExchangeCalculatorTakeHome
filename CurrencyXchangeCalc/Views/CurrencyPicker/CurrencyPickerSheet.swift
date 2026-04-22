@@ -14,3 +14,9 @@ struct CurrencyPickerSheet: View {
         // TODO: implement in Phase 4
     }
 }
+
+#Preview {
+//    CurrencyPickerSheet(currencies: [.fallbackList.first!], selectedCurrency: .fallbackList.first!) { _ in
+//        
+//    }
+}
