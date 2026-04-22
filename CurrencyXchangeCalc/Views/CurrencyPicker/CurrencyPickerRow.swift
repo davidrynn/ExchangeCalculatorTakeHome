@@ -31,7 +31,6 @@ struct CurrencyPickerRow: View {
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("currencyPickerRow.\(currency.code)")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }

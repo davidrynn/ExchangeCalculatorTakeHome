@@ -27,6 +27,7 @@ struct CurrencyPickerSheet: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("currencyPickerRow.\(currency.code)")
             }
             .navigationTitle("Select currency")
             .navigationBarTitleDisplayMode(.inline)
