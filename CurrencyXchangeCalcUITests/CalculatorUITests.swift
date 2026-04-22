@@ -35,22 +35,25 @@ final class CalculatorUITests: XCTestCase {
         let foreignField = app.textFields["foreignAmountField"]
         XCTAssertTrue(usdcField.waitForExistence(timeout: 5))
 
-        // Seed the two fields with distinct values via direct typing.
-        // We rely on each field's accessibility value for assertions.
+        // Seed both fields with distinct values. Without a loaded rate
+        // (rate loading lands in Phase 5), typing into USDc does not
+        // auto-fill foreign — so we type into each field independently.
         usdcField.tap()
-        usdcField.typeText("5")
+        usdcField.typeText("11")
+
+        foreignField.tap()
+        foreignField.typeText("22")
+
+        let beforeSwapUSDc = (usdcField.value as? String) ?? ""
+        let beforeSwapForeign = (foreignField.value as? String) ?? ""
+        XCTAssertEqual(beforeSwapUSDc, "11")
+        XCTAssertEqual(beforeSwapForeign, "22")
 
         app.buttons["swapButton"].tap()
 
-        // After swap, the USDc field's value now contains what was in
-        // foreign, and vice-versa. We don't assert exact arithmetic here;
-        // exact math is covered by ViewModel unit tests.
-        let swappedUSDc = (usdcField.value as? String) ?? ""
-        let swappedForeign = (foreignField.value as? String) ?? ""
-        XCTAssertNotEqual(swappedUSDc, "5", "USDc should no longer hold its original value after swap")
-        // Either field holding "5" is acceptable depending on where the
-        // pre-swap value landed; we just need one of them to reflect it.
-        XCTAssertTrue(swappedUSDc == "5" || swappedForeign == "5",
-                      "Original '5' should appear in one of the two fields after swap")
+        let afterSwapUSDc = (usdcField.value as? String) ?? ""
+        let afterSwapForeign = (foreignField.value as? String) ?? ""
+        XCTAssertEqual(afterSwapUSDc, "22", "USDc should now hold the prior foreign value")
+        XCTAssertEqual(afterSwapForeign, "11", "Foreign should now hold the prior USDc value")
     }
 }

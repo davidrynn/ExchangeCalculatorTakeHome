@@ -145,8 +145,10 @@ struct ExchangeCalculatorView: View {
 
 // MARK: - Preview-only service
 
-private final class MockPreviewService: ExchangeRateServiceProtocol, @unchecked Sendable {
-    nonisolated func fetchRates(for currencies: [String]) async throws -> [ExchangeRate] {
+/// Value-type preview service. Inherently `Sendable` via struct, so no
+/// `@unchecked` needed.
+private struct MockPreviewService: ExchangeRateServiceProtocol {
+    func fetchRates(for currencies: [String]) async throws -> [ExchangeRate] {
         [
             ExchangeRate(
                 ask: Decimal(string: "18.4105")!,
@@ -156,7 +158,7 @@ private final class MockPreviewService: ExchangeRateServiceProtocol, @unchecked 
             )
         ]
     }
-    nonisolated func fetchCurrencies() async throws -> [String] {
+    func fetchCurrencies() async throws -> [String] {
         Currency.fallbackList.map(\.code)
     }
 }
