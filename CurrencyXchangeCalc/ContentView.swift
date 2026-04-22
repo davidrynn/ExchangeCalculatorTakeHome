@@ -1,10 +1,17 @@
 import SwiftUI
 
-/// App root. Phase 3 hosts the calculator directly; Phase 5 will inject
-/// a configured `LiveExchangeRateService` here.
+/// App root container. Receives the composition-root view model from
+/// `CurrencyXchangeCalcApp` (live service wired) or uses a default for
+/// previews.
 struct ContentView: View {
+    let viewModel: ExchangeCalculatorViewModel?
+
+    init(viewModel: ExchangeCalculatorViewModel? = nil) {
+        self.viewModel = viewModel
+    }
+
     var body: some View {
-        ExchangeCalculatorView()
+        ExchangeCalculatorView(viewModel: viewModel)
     }
 }
 

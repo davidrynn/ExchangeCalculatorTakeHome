@@ -48,8 +48,10 @@ final class ExchangeCalculatorViewModel {
 
     /// Monotonically-increasing token bumped on each `loadRates` call.
     /// Guards against an older in-flight fetch clobbering newer state if
-    /// overlapping calls ever occur. In practice SwiftUI `.task(id:)`
-    /// prevents overlap structurally — this is a belt-and-suspenders layer.
+    /// overlapping calls ever occur. In the current view layer SwiftUI
+    /// `.task(id:)` is the sole cancellation boundary (both currency
+    /// changes and Retry go through a composite id), so this is
+    /// defense-in-depth for direct callers (tests, future flows).
     private var loadGeneration: UInt64 = 0
 
     // MARK: - Init
@@ -129,6 +131,45 @@ final class ExchangeCalculatorViewModel {
         if let rate = currentRate, rate.currencyCode != currency.code {
             currentRate = nil
             foreignAmount = ""
+        }
+    }
+
+    /// Fetches the list of supported foreign currencies from the API and
+    /// merges it with `Currency.fallbackList`. Falls back silently when
+    /// the endpoint isn't deployed (`ServiceError.unavailable`) or the
+    /// device has a transport failure (`URLError`). **Decoding errors
+    /// and unexpected failures propagate** via `errorMessage` so
+    /// programmer bugs are not silently swallowed.
+    ///
+    /// Intended to be called once when the view appears.
+    func loadAvailableCurrencies() async {
+        do {
+            let codes = try await service.fetchCurrencies()
+            if Task.isCancelled { return }
+            // Preserve flag + display name from fallback metadata when a
+            // server code matches; anything novel is appended with best-
+            // effort labels.
+            let existing = Dictionary(uniqueKeysWithValues: Currency.fallbackList.map { ($0.code, $0) })
+            let merged: [Currency] = codes.map { code in
+                existing[code] ?? Currency(code: code, flagEmoji: "🏳️", displayName: code)
+            }
+            availableCurrencies = merged.isEmpty ? Currency.fallbackList : merged
+        } catch ServiceError.unavailable {
+            // Expected — endpoint not deployed yet. Fall back silently.
+            availableCurrencies = Currency.fallbackList
+        } catch is CancellationError {
+            // Structured cancellation — don't touch state.
+        } catch let urlError as URLError {
+            // Transport failure (offline, DNS, etc). Non-critical for
+            // the currency list; fall back silently.
+            _ = urlError
+            availableCurrencies = Currency.fallbackList
+        } catch {
+            // Decoding errors and anything else — surface, because these
+            // indicate a real bug (schema mismatch, programmer error)
+            // rather than a missing endpoint.
+            availableCurrencies = Currency.fallbackList
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 

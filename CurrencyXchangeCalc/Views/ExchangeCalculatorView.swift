@@ -10,6 +10,12 @@ struct ExchangeCalculatorView: View {
     @State var viewModel: ExchangeCalculatorViewModel
     @State private var isCurrencyPickerPresented: Bool = false
 
+    /// Bumped when the user taps Retry. Combined with the selected
+    /// currency code to form the `.task(id:)` key, so Retry drives a
+    /// fresh load through the same structured-concurrency boundary
+    /// instead of spawning a detached `Task { }` from the button.
+    @State private var retryToken: Int = 0
+
     private static let usdcCurrency = Currency(
         code: "USDc",
         flagEmoji: "🇺🇸",
@@ -18,6 +24,12 @@ struct ExchangeCalculatorView: View {
 
     init(viewModel: ExchangeCalculatorViewModel? = nil) {
         self._viewModel = State(wrappedValue: viewModel ?? ExchangeCalculatorViewModel())
+    }
+
+    /// Composite key for `.task(id:)` — changing either component
+    /// cancels the old task and starts a new one.
+    private var loadTaskID: String {
+        "\(viewModel.selectedCurrency.code)#\(retryToken)"
     }
 
     var body: some View {
@@ -39,6 +51,17 @@ struct ExchangeCalculatorView: View {
                 ProgressView()
                     .accessibilityIdentifier("loadingIndicator")
             }
+        }
+        // Load the currency list once on appear.
+        .task {
+            await viewModel.loadAvailableCurrencies()
+        }
+        // Rate fetch is keyed by (selected currency, retry token). Either
+        // a currency change or a Retry tap bumps the key, which cancels
+        // the prior task and starts a new one. Cancellation is fully
+        // structural — no manual Task spawning anywhere in this view.
+        .task(id: loadTaskID) {
+            await viewModel.loadRates()
         }
         .sheet(isPresented: $isCurrencyPickerPresented) {
             // Bind selection through a wrapper that routes writes through
@@ -120,7 +143,21 @@ struct ExchangeCalculatorView: View {
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(2)
-                Spacer()
+                Spacer(minLength: 8)
+                Button("Retry") {
+                    viewModel.errorMessage = nil
+                    // Bumping the token changes the .task(id:) key;
+                    // SwiftUI cancels any in-flight task and starts a
+                    // fresh loadRates under the same structured-
+                    // concurrency boundary. No Task { } here.
+                    retryToken &+= 1
+                }
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.white.opacity(0.25), in: Capsule())
+                .accessibilityIdentifier("errorRetry")
                 Button {
                     viewModel.errorMessage = nil
                 } label: {
@@ -128,6 +165,7 @@ struct ExchangeCalculatorView: View {
                         .foregroundStyle(.white.opacity(0.9))
                 }
                 .accessibilityLabel("Dismiss error")
+                .accessibilityIdentifier("errorDismiss")
             }
             .padding(12)
             .background(Color.red.opacity(0.9), in: RoundedRectangle(cornerRadius: 12))

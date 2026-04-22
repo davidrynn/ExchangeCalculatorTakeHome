@@ -6,8 +6,16 @@ final class CalculatorUITests: XCTestCase {
     }
 
     @MainActor
-    func testCalculatorLoads() {
+    private func makeApp() -> XCUIApplication {
         let app = XCUIApplication()
+        // Deterministic: no live rate load, no network race.
+        app.launchArguments += ["-UITEST_DISABLE_NETWORK"]
+        return app
+    }
+
+    @MainActor
+    func testCalculatorLoads() {
+        let app = makeApp()
         app.launch()
 
         XCTAssertTrue(app.staticTexts["exchangeTitle"].waitForExistence(timeout: 5))
@@ -18,7 +26,7 @@ final class CalculatorUITests: XCTestCase {
 
     @MainActor
     func testSwapButtonExists() {
-        let app = XCUIApplication()
+        let app = makeApp()
         app.launch()
 
         let swap = app.buttons["swapButton"]
@@ -28,7 +36,7 @@ final class CalculatorUITests: XCTestCase {
 
     @MainActor
     func testSwapButtonSwapsValues() {
-        let app = XCUIApplication()
+        let app = makeApp()
         app.launch()
 
         let usdcField = app.textFields["usdcAmountField"]

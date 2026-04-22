@@ -8,6 +8,7 @@ final class CurrencyPickerUITests: XCTestCase {
     @MainActor
     func testPickerOpensOnForeignCurrencyTap() {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_DISABLE_NETWORK"]
         app.launch()
 
         let foreignPicker = app.buttons["foreignCurrencyPicker"]
@@ -24,6 +25,7 @@ final class CurrencyPickerUITests: XCTestCase {
     @MainActor
     func testPickerDismissesViaCancel() {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_DISABLE_NETWORK"]
         app.launch()
 
         app.buttons["foreignCurrencyPicker"].tap()
@@ -39,6 +41,7 @@ final class CurrencyPickerUITests: XCTestCase {
     @MainActor
     func testSelectingCurrencyUpdatesFieldAndDismissesPicker() {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_DISABLE_NETWORK"]
         app.launch()
 
         let foreignPicker = app.buttons["foreignCurrencyPicker"]
