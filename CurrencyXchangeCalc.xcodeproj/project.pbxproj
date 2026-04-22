@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		22BA9A182F98EA3300F46579 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 22BA9A172F98EA3300F46579 /* README.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		22BA99F92F98E7D700F46579 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		22BA99EB2F98E7D400F46579 /* CurrencyXchangeCalc.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CurrencyXchangeCalc.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		22BA99F82F98E7D700F46579 /* CurrencyXchangeCalcTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurrencyXchangeCalcTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		22BA9A022F98E7D700F46579 /* CurrencyXchangeCalcUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurrencyXchangeCalcUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		22BA9A172F98EA3300F46579 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -43,6 +48,11 @@
 		22BA9A052F98E7D700F46579 /* CurrencyXchangeCalcUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = CurrencyXchangeCalcUITests;
+			sourceTree = "<group>";
+		};
+		22BA9A1A2F98EA4C00F46579 /* Docs */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Docs;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +85,8 @@
 		22BA99E22F98E7D400F46579 = {
 			isa = PBXGroup;
 			children = (
+				22BA9A1A2F98EA4C00F46579 /* Docs */,
+				22BA9A172F98EA3300F46579 /* README.md */,
 				22BA99ED2F98E7D400F46579 /* CurrencyXchangeCalc */,
 				22BA99FB2F98E7D700F46579 /* CurrencyXchangeCalcTests */,
 				22BA9A052F98E7D700F46579 /* CurrencyXchangeCalcUITests */,
@@ -109,6 +121,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				22BA99ED2F98E7D400F46579 /* CurrencyXchangeCalc */,
+				22BA9A1A2F98EA4C00F46579 /* Docs */,
 			);
 			name = CurrencyXchangeCalc;
 			packageProductDependencies = (
@@ -212,6 +225,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				22BA9A182F98EA3300F46579 /* README.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
