@@ -46,6 +46,12 @@ final class ExchangeCalculatorViewModel {
     /// successful `loadRates`.
     private(set) var currentRate: ExchangeRate?
 
+    /// Monotonically-increasing token bumped on each `loadRates` call.
+    /// Guards against an older in-flight fetch clobbering newer state if
+    /// overlapping calls ever occur. In practice SwiftUI `.task(id:)`
+    /// prevents overlap structurally — this is a belt-and-suspenders layer.
+    private var loadGeneration: UInt64 = 0
+
     // MARK: - Init
 
     init(
@@ -95,23 +101,31 @@ final class ExchangeCalculatorViewModel {
 
     // MARK: - Commands
 
-    /// Swaps the two displayed amounts. The currency assignment itself
-    /// stays the same (USDc is always USDc); the swap reflects the
-    /// user's intent to flip which side they're thinking about.
+    /// Swaps the two displayed amount strings.
+    ///
+    /// This is a visual-only swap — it does **not** recompute using the
+    /// current rate, and the currency assignments stay the same (USDc is
+    /// always USDc). If the product intent later changes to "flip which
+    /// side is authoritative and recompute the other," this function will
+    /// need a direction-state companion; today the plan says swap amounts.
     func swapCurrencies() {
         let temp = usdcAmount
         usdcAmount = foreignAmount
         foreignAmount = temp
     }
 
-    /// Sets the selected foreign currency and re-derives the foreign amount
-    /// in-memory using the current USDc value. Does not trigger a network
-    /// fetch — that is driven by the view's `.task(id:)` in Phase 5.
+    /// Sets the selected foreign currency and invalidates any stale rate.
+    ///
+    /// Does not trigger a network fetch — that is driven by the view's
+    /// `.task(id: selectedCurrency.code)` in Phase 5. When the selected
+    /// currency changes to a different code, we clear `currentRate` and
+    /// `foreignAmount` so the UI cannot render a conversion derived from
+    /// the prior currency's rate. The USDc amount stays sticky so the
+    /// user's intent is preserved across currency switches.
     ///
     /// - Parameter currency: the newly selected foreign currency.
     func selectCurrency(_ currency: Currency) {
         selectedCurrency = currency
-        // Invalidate stale rate if it's for a different book.
         if let rate = currentRate, rate.currencyCode != currency.code {
             currentRate = nil
             foreignAmount = ""
@@ -121,17 +135,30 @@ final class ExchangeCalculatorViewModel {
     /// Fetches the latest rate for `selectedCurrency`. Intended to be
     /// invoked by SwiftUI's `.task(id: selectedCurrency.code)` in Phase 5.
     ///
-    /// Honors cooperative cancellation — checks `Task.isCancelled` after
-    /// the `await` and before mutating state, so a stale response never
-    /// overwrites newer state. Cancellation is never surfaced as an error.
+    /// **Overlap safety:** bumps `loadGeneration` on entry. An older
+    /// in-flight call cannot overwrite newer state — rate-commit and
+    /// `isLoading` reset both gate on the call's generation matching the
+    /// current one. Under `.task(id:)` usage, overlap does not happen in
+    /// practice; this is defense-in-depth for direct callers.
+    ///
+    /// **Cancellation:** checks `Task.isCancelled` after the `await` and
+    /// before mutating state. `CancellationError` passes through silently
+    /// (no user-visible error) so SwiftUI's task cancellation on id change
+    /// is invisible.
     func loadRates() async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if generation == loadGeneration {
+                isLoading = false
+            }
+        }
 
         do {
             let rates = try await service.fetchRates(for: [selectedCurrency.code])
-            if Task.isCancelled { return }
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             if let rate = rates.first(where: { $0.currencyCode == selectedCurrency.code }) {
                 currentRate = rate
                 recalculateAfterRateUpdate()
@@ -139,7 +166,7 @@ final class ExchangeCalculatorViewModel {
         } catch is CancellationError {
             // Intentional cancellation — no user-facing error.
         } catch {
-            if Task.isCancelled { return }
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -159,28 +186,60 @@ final class ExchangeCalculatorViewModel {
 
     /// Parses user text into a `Decimal`, respecting `Locale.current` so
     /// comma-decimal locales (e.g. `es_ES`) work without translation.
-    /// Returns `nil` for empty, non-numeric, NaN, or otherwise unparseable input.
+    /// Returns `nil` for empty, non-numeric, NaN, malformed input (e.g.
+    /// `"1.2.3"`), or scientific notation.
+    ///
+    /// `Foundation.Decimal(string:)` is permissive — it parses a prefix
+    /// and discards the rest, so `"1.2.3"` yields `1.2`. We explicitly
+    /// validate the input shape first to reject that.
     static func parse(_ text: String, locale: Locale = .current) -> Decimal? {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
-        // Accept both locale decimal and ASCII dot so we don't have to
-        // know the user's keyboard layout.
-        let candidates: [String] = {
-            let separator = locale.decimalSeparator ?? "."
-            if separator == "." {
-                return [trimmed]
-            }
-            return [trimmed, trimmed.replacingOccurrences(of: separator, with: ".")]
-        }()
+
+        let separator = locale.decimalSeparator ?? "."
+        // Accept both the locale separator and ASCII dot so users on
+        // comma-locale keyboards can still type with a dot.
+        let candidates: [String] = (separator == ".")
+            ? [trimmed]
+            : [trimmed, trimmed.replacingOccurrences(of: separator, with: ".")]
+
         for candidate in candidates {
-            if let d = Decimal(string: candidate, locale: locale) {
-                return d.isFinite ? d : nil
-            }
+            // Reject anything that isn't digits + exactly-one optional dot,
+            // with an optional leading minus. This rejects "1.2.3", "1e5",
+            // "1,000.00" (grouping separators), trailing junk, etc.
+            if !isWellFormedDecimalString(candidate) { continue }
             if let d = Decimal(string: candidate, locale: Locale(identifier: "en_US_POSIX")) {
                 return d.isFinite ? d : nil
             }
         }
         return nil
+    }
+
+    /// Matches `[-]? digits [. digits]?` — a plain decimal number with
+    /// no grouping, no exponent, no trailing characters.
+    private static func isWellFormedDecimalString(_ s: String) -> Bool {
+        guard !s.isEmpty else { return false }
+        var scalars = s.unicodeScalars.makeIterator()
+        guard var current = scalars.next() else { return false }
+        if current == "-" {
+            guard let next = scalars.next() else { return false }
+            current = next
+        }
+        var sawDigit = false
+        var sawDot = false
+        while true {
+            if CharacterSet.decimalDigits.contains(current) {
+                sawDigit = true
+            } else if current == "." {
+                if sawDot { return false }
+                sawDot = true
+            } else {
+                return false
+            }
+            guard let next = scalars.next() else { break }
+            current = next
+        }
+        return sawDigit
     }
 
     /// Formats a `Decimal` to 2 fractional digits using `Decimal.FormatStyle`.

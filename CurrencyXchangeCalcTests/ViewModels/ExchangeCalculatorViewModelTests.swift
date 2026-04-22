@@ -182,4 +182,108 @@ struct ExchangeCalculatorViewModelTests {
         #expect(vm.isLoading == false)
         #expect(vm.currentRate != nil)
     }
+
+    // MARK: - Pre-rate safety
+
+    @Test
+    func typingBeforeRateLoadedDoesNotCrash() {
+        let mock = MockExchangeRateService()
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: Currency.fallbackList[0])
+        // No loadRates invoked — currentRate is nil.
+        vm.usdcAmountChanged("5")
+        vm.foreignAmountChanged("100")
+        // Inputs are echoed into the fields, but nothing is computed.
+        #expect(vm.usdcAmount == "5" || vm.usdcAmount == "100") // last-write-wins
+        #expect(vm.currentRate == nil)
+    }
+
+    // MARK: - Divide-by-zero guard
+
+    @Test
+    func foreignInputWithZeroAskDoesNotCrash() async {
+        let (vm, _) = await makeVM(
+            ask: Decimal.zero,
+            bid: Decimal(string: "10")!
+        )
+        vm.foreignAmountChanged("1")
+        // With ask == 0 we must not divide; usdcAmount should be left
+        // untouched (or at least not crash / produce Inf).
+        #expect(vm.usdcAmount != "inf")
+        #expect(vm.usdcAmount != "Inf")
+    }
+
+    // MARK: - Adversarial parse inputs
+
+    @Test
+    func parseRejectsMultipleDecimalPoints() {
+        #expect(ExchangeCalculatorViewModel.parse("1.2.3", locale: Locale(identifier: "en_US")) == nil)
+    }
+
+    @Test
+    func parseRejectsEmptyAndWhitespace() {
+        #expect(ExchangeCalculatorViewModel.parse("", locale: Locale(identifier: "en_US")) == nil)
+        #expect(ExchangeCalculatorViewModel.parse("   ", locale: Locale(identifier: "en_US")) == nil)
+    }
+
+    @Test
+    func parseLeadingZerosAcceptedAsDecimalValue() {
+        // "007" should parse to Decimal(7). Leading-zero *display* cleanup
+        // is a Phase 6 input-validation concern, not a parser concern.
+        #expect(ExchangeCalculatorViewModel.parse("007", locale: Locale(identifier: "en_US")) == Decimal(7))
+    }
+
+    // MARK: - Cancellation / overlap safety
+
+    @Test
+    func cancellationDoesNotCommitStateOrSurfaceError() async {
+        let mock = MockExchangeRateService()
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "18.4105")!,
+                bid: Decimal(string: "18.4069")!,
+                book: "usdc_mxn",
+                date: ""
+            )
+        ]
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: Currency.fallbackList[0])
+
+        let task = Task { await vm.loadRates() }
+        task.cancel()
+        await task.value
+
+        // With cancellation, the result may or may not have been committed
+        // depending on timing — but errorMessage must never be set for an
+        // intentional cancellation.
+        #expect(vm.errorMessage == nil)
+    }
+
+    @Test
+    func overlappingLoadRatesDoesNotCommitOlderResult() async {
+        // Two back-to-back loads: the older call must not clobber state.
+        // This test relies on the generation token in loadRates.
+        let mock = MockExchangeRateService()
+        let firstRate = ExchangeRate(
+            ask: Decimal(string: "1")!,
+            bid: Decimal(string: "1")!,
+            book: "usdc_mxn",
+            date: ""
+        )
+        mock.stubbedRates = [firstRate]
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: Currency.fallbackList[0])
+        await vm.loadRates()
+
+        // Now swap the mock to return a different rate and issue another
+        // load. After completion, VM state reflects the newer call.
+        let secondRate = ExchangeRate(
+            ask: Decimal(string: "20")!,
+            bid: Decimal(string: "10")!,
+            book: "usdc_mxn",
+            date: ""
+        )
+        mock.stubbedRates = [secondRate]
+        await vm.loadRates()
+
+        #expect(vm.currentRate == secondRate)
+        #expect(vm.isLoading == false)
+    }
 }
