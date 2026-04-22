@@ -1,7 +1,10 @@
 import Foundation
 
 /// Raw ticker from GET /v1/tickers.
-struct ExchangeRate: Codable, Equatable {
+///
+/// `Sendable` so decoded values can cross from the nonisolated service into
+/// the `@MainActor` view model without boundary warnings.
+nonisolated struct ExchangeRate: Codable, Equatable, Sendable {
     let ask: Decimal
     let bid: Decimal
     let book: String

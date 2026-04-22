@@ -1,5 +1,5 @@
 /// Which currency field the user is currently editing.
-enum ConversionDirection {
+nonisolated enum ConversionDirection: Sendable {
     case usdc
     case foreign
 }

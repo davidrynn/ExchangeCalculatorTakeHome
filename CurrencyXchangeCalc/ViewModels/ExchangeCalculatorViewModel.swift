@@ -2,11 +2,17 @@ import Foundation
 import Observation
 
 /// Manages all state and business logic for the exchange calculator screen.
+///
+/// Explicitly `@MainActor` (also the project default) since all state is
+/// observed by SwiftUI. The injected service is `Sendable` + `nonisolated`,
+/// so `await service.fetchRates(...)` hops off the main thread for the I/O
+/// and back on to mutate state.
+@MainActor
 @Observable
 final class ExchangeCalculatorViewModel {
     var usdcAmount: String = ""
     var foreignAmount: String = ""
-    var selectedCurrency: Currency = Currency.fallbackList.first ?? Currency(code: "MXN", flagEmoji: "🇲🇽", displayName: "Mexican Peso")
+    var selectedCurrency: Currency = Currency(code: "MXN", flagEmoji: "🇲🇽", displayName: "Mexican Peso")
     var availableCurrencies: [Currency] = Currency.fallbackList
     var isLoading: Bool = false
     var errorMessage: String?
@@ -43,6 +49,7 @@ final class ExchangeCalculatorViewModel {
     }
 
     /// Initiates API fetch; falls back to hardcoded currencies on error.
+    /// Honors structured cancellation via the caller's task (e.g. SwiftUI `.task`).
     func loadRates() async {
         // TODO: implement in Phase 2
     }

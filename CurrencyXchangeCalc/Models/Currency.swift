@@ -1,7 +1,10 @@
 import Foundation
 
 /// A supported currency for exchange against USDc.
-struct Currency: Identifiable, Hashable {
+///
+/// Value type; `Sendable` so it can cross actor boundaries between the
+/// nonisolated service layer and the `@MainActor` view model.
+nonisolated struct Currency: Identifiable, Hashable, Sendable {
     let code: String
     let flagEmoji: String
     let displayName: String

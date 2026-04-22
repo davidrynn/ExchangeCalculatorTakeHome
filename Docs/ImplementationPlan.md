@@ -93,6 +93,26 @@ CurrencyXchangeCalcUITests/
 - Currency list hardcoded to `["MXN", "ARS", "BRL", "COP"]` with runtime merge if API ever responds
 - No 3rd-party dependencies
 
+### Concurrency & Actor Isolation
+
+The app target sets `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` and `SWIFT_APPROACHABLE_CONCURRENCY = YES`, so every unannotated type is implicitly `@MainActor`. Explicit isolation annotations are required wherever work should run off the main thread.
+
+| Layer | Isolation | Rationale |
+|---|---|---|
+| Models (`Currency`, `ExchangeRate`, `ConversionDirection`) | `Sendable`, nonisolated | Pure value types; must cross isolation boundaries |
+| `ExchangeRateServiceProtocol` | `Sendable` | Held by MainActor VM; must be safe to share |
+| `LiveExchangeRateService` | `final class … Sendable`, `nonisolated` methods | Stateless URLSession wrapper; network work off main |
+| `MockExchangeRateService` (tests) | `@MainActor` | Sequential test code with mutable stubs |
+| `ExchangeCalculatorViewModel` | explicit `@MainActor` | Owns UI state |
+| All Views | `@MainActor` (SwiftUI default) | — |
+
+**Structured concurrency rules:**
+- Views kick off fetches via `.task { await viewModel.loadRates() }` — SwiftUI auto-cancels on view disappear.
+- ViewModel methods that call the service use plain `await` (inherits MainActor); the service methods are `nonisolated async`, so the actual network I/O runs off main.
+- Long-running / retryable loops call `try Task.checkCancellation()` cooperatively.
+- Parallel fan-out (if we later prefetch multiple currencies): `async let` inside `loadRates`.
+- No raw `Task.detached` unless we explicitly need to escape inheritance — prefer letting `.task` scope manage lifetime.
+
 ---
 
 ## Phase 0 — Architecture & File Scaffold
