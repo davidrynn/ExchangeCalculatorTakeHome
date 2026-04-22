@@ -8,6 +8,7 @@ import SwiftUI
 /// previews and tests can swap the service backing.
 struct ExchangeCalculatorView: View {
     @State var viewModel: ExchangeCalculatorViewModel
+    @State private var isCurrencyPickerPresented: Bool = false
 
     private static let usdcCurrency = Currency(
         code: "USDc",
@@ -38,6 +39,18 @@ struct ExchangeCalculatorView: View {
                 ProgressView()
                     .accessibilityIdentifier("loadingIndicator")
             }
+        }
+        .sheet(isPresented: $isCurrencyPickerPresented) {
+            // Bind selection through a wrapper that routes writes through
+            // `viewModel.selectCurrency(_:)` so the VM's side effects
+            // (invalidating stale rate, clearing foreign amount) run.
+            CurrencyPickerSheet(
+                currencies: viewModel.availableCurrencies,
+                selectedCurrency: Binding(
+                    get: { viewModel.selectedCurrency },
+                    set: { viewModel.selectCurrency($0) }
+                )
+            )
         }
     }
 
@@ -90,7 +103,7 @@ struct ExchangeCalculatorView: View {
                     amountFieldIdentifier: "foreignAmountField",
                     currencyLabelIdentifier: "foreignCurrencyPicker",
                     onTapCurrency: {
-                        // Wired in Phase 4 when the picker sheet lands.
+                        isCurrencyPickerPresented = true
                     }
                 )
             }
