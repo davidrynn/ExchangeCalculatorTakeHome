@@ -110,11 +110,12 @@ The app target sets `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` and `SWIFT_APPRO
 | All Views | `@MainActor` (SwiftUI default) | — |
 
 **Structured concurrency rules:**
-- Views kick off fetches via `.task { await viewModel.loadRates() }` — SwiftUI auto-cancels on view disappear.
+- Views kick off fetches via `.task(id: viewModel.selectedCurrency.code) { await viewModel.loadRates() }` — SwiftUI cancels and restarts the task whenever the id changes (e.g. user picks a different currency), and cancels on view disappear.
+- `.task(id:)` owns cancellation end-to-end; the VM does **not** store its own `Task` reference. `loadRates()` is a plain `async` function and relies on `Task.isCancelled` / `try Task.checkCancellation()` to drop stale responses.
 - ViewModel methods that call the service use plain `await` (inherits MainActor); the service methods are `nonisolated async`, so the actual network I/O runs off main.
 - Long-running / retryable loops call `try Task.checkCancellation()` cooperatively.
 - Parallel fan-out (if we later prefetch multiple currencies): `async let` inside `loadRates`.
-- No raw `Task.detached` unless we explicitly need to escape inheritance — prefer letting `.task` scope manage lifetime.
+- No raw `Task.detached` unless we explicitly need to escape inheritance — prefer letting `.task(id:)` scope manage lifetime.
 
 ---
 
@@ -182,8 +183,8 @@ nonisolated struct Currency: Identifiable, Hashable, Sendable {
 ```swift
 /// Raw ticker from GET /v1/tickers.
 nonisolated struct ExchangeRate: Codable, Equatable, Sendable {
-    let ask: Decimal    // price to sell USDc (buy foreign)
-    let bid: Decimal    // price to buy USDc (sell foreign)
+    let ask: Decimal    // price to BUY USDc (pay `ask` units of foreign per 1 USDc)
+    let bid: Decimal    // price to SELL USDc (receive `bid` units of foreign per 1 USDc)
     let book: String    // e.g. "usdc_mxn"
     let date: String
 
@@ -227,8 +228,9 @@ nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
 ### Checklist
 - [ ] `Currency` model (`nonisolated`, `Sendable`) with `fallbackList` (MXN, ARS, BRL, COP + flag emojis)
 - [ ] `ExchangeRate` Codable model (`nonisolated`, `Sendable`); `currencyCode` computed from `book`
+- [ ] **`ExchangeRate` custom `Decodable` / property wrapper** to decode quoted-string numbers in the API response (`"ask": "18.4105000000"`) into `Decimal` via `Decimal(string:)` — never route through `Double`, which loses precision at the 10-digit fraction
 - [ ] `ConversionDirection` enum (`nonisolated`, `Sendable`)
-- [ ] `ExchangeRateServiceProtocol: Sendable` with two async methods
+- [ ] `ExchangeRateServiceProtocol: Sendable` with two `nonisolated async` methods
 - [ ] `LiveExchangeRateService` (`nonisolated final class`) — `fetchRates` implementation
 - [ ] `LiveExchangeRateService` — `fetchCurrencies` implementation (graceful fallback on 404)
 - [ ] `ServiceError` enum (`nonisolated`, `Sendable`) with localized descriptions
@@ -290,11 +292,14 @@ final class ExchangeCalculatorViewModel {
     /// Swaps USDc ↔ selected currency positions (swaps displayed amounts).
     func swapCurrencies()
 
-    /// Sets selectedCurrency and re-fetches rates.
+    /// Sets selectedCurrency and re-converts using the currently held rate.
+    /// Does not trigger network fetches — rate loading is driven by the view's
+    /// `.task(id: selectedCurrency.code)` modifier in Phase 5.
     func selectCurrency(_ currency: Currency)
 
-    /// Initiates API fetch; falls back to hardcoded currencies on error.
-    /// Honors structured cancellation — caller is typically SwiftUI `.task { }`.
+    /// Fetches rates for the selected currency via the injected service.
+    /// In Phase 2 this is exercised only via `MockExchangeRateService`.
+    /// Honors structured cancellation — caller is typically SwiftUI `.task(id:)`.
     func loadRates() async
 }
 ```
@@ -457,9 +462,9 @@ feat: currency picker bottom sheet — list, selection, dismiss
 
 ### Spec
 - Wire `LiveExchangeRateService` into ViewModel (injected at app startup via `CurrencyXchangeCalcApp`).
-- Call `loadRates()` on `.task(id: selectedCurrency.code)` when view appears so switching currency automatically cancels the prior fetch (structured cancellation via SwiftUI).
+- Call `loadRates()` via `.task(id: viewModel.selectedCurrency.code) { await viewModel.loadRates() }`. SwiftUI owns the task lifecycle: changing the id cancels the old task and starts a new one; leaving the view cancels too.
 - Currencies fallback: try `fetchCurrencies()`; on error/404 use `Currency.fallbackList` silently (no error surfaced).
-- **Stale-response protection:** VM holds the current in-flight `Task<Void, Never>` reference; calling `loadRates` again cancels the previous and replaces it. Fetch callbacks check `Task.isCancelled` / `try Task.checkCancellation()` before committing state so an older response can never overwrite newer state.
+- **Stale-response protection (single model — SwiftUI-driven):** `.task(id:)` cancels any prior in-flight call when the id changes. `loadRates()` stays a plain `async` function with no stored `Task` — after every `await`, it calls `try Task.checkCancellation()` (or checks `Task.isCancelled`) before mutating state, so a stale response that finishes after cancellation cannot overwrite newer state. Do **not** wrap the call in another `Task { }` inside the VM; that would create double-task orchestration and defeat SwiftUI's cancellation.
 - Error UI: non-blocking banner with retry button.
 - Loading UI: `ProgressView` during initial fetch.
 
@@ -468,16 +473,15 @@ feat: currency picker bottom sheet — list, selection, dismiss
 - [ ] `ExchangeCalculatorView` calls `viewModel.loadRates()` via `.task(id: selectedCurrency.code)`
 - [ ] `fetchCurrencies` 404/unavailable → silently falls back to hardcoded list (no error shown)
 - [ ] Network error on `fetchRates` → `errorMessage` set, banner shown, retry button works
-- [ ] Rates refresh when currency is switched; prior in-flight task is cancelled (stale-response protection)
+- [ ] Rates refresh when currency is switched; prior in-flight task is cancelled by `.task(id:)` (stale-response protection)
 - [ ] `loadRates` checks cancellation after each `await` and before mutating state
-- [ ] API's quoted-string decimals (e.g. `"18.4105000000"`) decode cleanly to `Decimal` (not `Double`) — custom `Decodable` init or `@propertyWrapper` keyed to strings
+- [ ] Quoted-string `Decimal` decoding already in place from Phase 1 — verified end-to-end against live API response
 
 ### Unit Tests
 - [ ] `MockExchangeRateService` with configurable failure mode
 - [ ] `loadRates` with service throwing → `errorMessage != nil`, `isLoading == false`
 - [ ] `loadRates` success → `isLoading == false`, rates available
 - [ ] Deterministic cancellation: issue two `loadRates` back-to-back; only the later one commits state
-- [ ] `ExchangeRate` decodes `"18.4105000000"` (string in JSON) to exact `Decimal(string: "18.4105000000")` without `Double` precision loss
 - [ ] `fetchCurrencies` throwing `.unavailable` → `availableCurrencies` equals `Currency.fallbackList` and `errorMessage` is `nil`
 
 ### Testing Command
@@ -530,7 +534,7 @@ polish: input validation, number formatting, accessibility labels, UX edge cases
 
 ---
 
-## Phase 7 — Full Test Suite & Public API Documentation
+## Phase 7 — Full Test Suite & API Documentation
 
 **Branch:** `feat/phase-7-tests-docs`
 
@@ -539,7 +543,7 @@ polish: input validation, number formatting, accessibility labels, UX edge cases
 **Unit tests — complete coverage targets:**
 - [ ] `ExchangeRate` — decoding, `currencyCode` extraction, edge cases
 - [ ] `Currency` — fallback list integrity
-- [ ] `ExchangeCalculatorViewModel` — all public methods covered
+- [ ] `ExchangeCalculatorViewModel` — every externally-callable method covered
 - [ ] Number formatting utility — boundary cases
 
 **UI tests — golden path:**
