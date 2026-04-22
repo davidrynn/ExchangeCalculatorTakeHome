@@ -257,6 +257,40 @@ struct ExchangeCalculatorViewModelTests {
         #expect(vm.errorMessage == nil)
     }
 
+    // MARK: - Max-two-decimal clamping
+
+    @Test
+    func clampKeepsUpToTwoDecimalPlaces() {
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.2", locale: .init(identifier: "en_US")) == "1.2")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.23", locale: .init(identifier: "en_US")) == "1.23")
+    }
+
+    @Test
+    func clampTruncatesExcessDecimalDigits() {
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.234", locale: .init(identifier: "en_US")) == "1.23")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("0.12345", locale: .init(identifier: "en_US")) == "0.12")
+    }
+
+    @Test
+    func clampPreservesPartialInput() {
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("", locale: .init(identifier: "en_US")) == "")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.", locale: .init(identifier: "en_US")) == "1.")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("123", locale: .init(identifier: "en_US")) == "123")
+    }
+
+    @Test
+    func clampRespectsCommaLocale() {
+        let spain = Locale(identifier: "es_ES")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1,234", locale: spain) == "1,23")
+    }
+
+    @Test
+    func usdcChangedClampsInputInPlace() async {
+        let (vm, _) = await makeVM()
+        vm.usdcAmountChanged("1.2345")
+        #expect(vm.usdcAmount == "1.23")
+    }
+
     // MARK: - Currency list fallback
 
     @Test

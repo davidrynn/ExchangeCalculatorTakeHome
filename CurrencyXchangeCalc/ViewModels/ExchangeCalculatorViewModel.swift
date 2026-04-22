@@ -70,33 +70,39 @@ final class ExchangeCalculatorViewModel {
     // MARK: - Input handlers
 
     /// User edited the USDc field. Re-derives `foreignAmount` using the
-    /// current rate's `bid` (USDc→foreign direction).
+    /// current rate's `bid` (USDc→foreign direction). Input is clamped
+    /// to at most 2 decimal places; extra digits are dropped before
+    /// being written back, and SwiftUI reconciles the `TextField` to
+    /// the clamped value.
     ///
     /// - Parameter newValue: raw text from the `TextField`.
     func usdcAmountChanged(_ newValue: String) {
-        usdcAmount = newValue
+        let clamped = Self.clampToTwoDecimalPlaces(newValue)
+        usdcAmount = clamped
         guard let rate = currentRate else { return }
-        if newValue.isEmpty {
+        if clamped.isEmpty {
             foreignAmount = ""
             return
         }
-        guard let parsed = Self.parse(newValue) else { return }
+        guard let parsed = Self.parse(clamped) else { return }
         let converted = parsed * rate.bid
         foreignAmount = Self.format(converted)
     }
 
     /// User edited the foreign field. Re-derives `usdcAmount` using the
-    /// current rate's `ask` (foreign→USDc direction).
+    /// current rate's `ask` (foreign→USDc direction). Input is clamped
+    /// to at most 2 decimal places.
     ///
     /// - Parameter newValue: raw text from the `TextField`.
     func foreignAmountChanged(_ newValue: String) {
-        foreignAmount = newValue
+        let clamped = Self.clampToTwoDecimalPlaces(newValue)
+        foreignAmount = clamped
         guard let rate = currentRate, rate.ask != 0 else { return }
-        if newValue.isEmpty {
+        if clamped.isEmpty {
             usdcAmount = ""
             return
         }
-        guard let parsed = Self.parse(newValue) else { return }
+        guard let parsed = Self.parse(clamped) else { return }
         let converted = parsed / rate.ask
         usdcAmount = Self.format(converted)
     }
@@ -254,6 +260,24 @@ final class ExchangeCalculatorViewModel {
             }
         }
         return nil
+    }
+
+    /// Clamps user-typed text to at most 2 decimal places. Preserves
+    /// partial input like `"1."` or `""` (typing in progress).
+    /// Locale-aware: honors the current decimal separator.
+    static func clampToTwoDecimalPlaces(_ input: String, locale: Locale = .current) -> String {
+        let separator = locale.decimalSeparator ?? "."
+        // Also accept ASCII dot on comma-locale keyboards.
+        let effectiveSeparator: String = {
+            if separator != "." && input.contains(separator) { return separator }
+            if input.contains(".") { return "." }
+            return separator
+        }()
+        guard let range = input.range(of: effectiveSeparator) else { return input }
+        let fractional = input[range.upperBound...]
+        if fractional.count <= 2 { return input }
+        let allowed = fractional.prefix(2)
+        return String(input[..<range.upperBound]) + allowed
     }
 
     /// Matches `[-]? digits [. digits]?` — a plain decimal number with
