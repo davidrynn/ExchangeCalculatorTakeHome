@@ -33,10 +33,16 @@ xcodebuild -project CurrencyXchangeCalc.xcodeproj \
            test
 
 # Unit only
-xcodebuild ... test -only-testing:CurrencyXchangeCalcTests
+xcodebuild -project CurrencyXchangeCalc.xcodeproj \
+           -scheme CurrencyXchangeCalc \
+           -destination 'platform=iOS Simulator,name=iPhone 17' \
+           test -only-testing:CurrencyXchangeCalcTests
 
 # UI only
-xcodebuild ... test -only-testing:CurrencyXchangeCalcUITests
+xcodebuild -project CurrencyXchangeCalc.xcodeproj \
+           -scheme CurrencyXchangeCalc \
+           -destination 'platform=iOS Simulator,name=iPhone 17' \
+           test -only-testing:CurrencyXchangeCalcUITests
 ```
 
 ## Features
