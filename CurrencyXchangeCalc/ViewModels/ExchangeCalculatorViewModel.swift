@@ -46,6 +46,12 @@ final class ExchangeCalculatorViewModel {
     /// successful `loadRates`.
     private(set) var currentRate: ExchangeRate?
 
+    /// `false` (default): USDc row on top, foreign row on bottom.
+    /// `true`: foreign row on top, USDc row on bottom. Toggled by
+    /// `swapCurrencies()`. Purely a display-position flag — the
+    /// amount/currency associations do not change.
+    var isSwapped: Bool = false
+
     /// Monotonically-increasing token bumped on each `loadRates` call.
     /// Guards against an older in-flight fetch clobbering newer state if
     /// overlapping calls ever occur. In the current view layer SwiftUI
@@ -70,50 +76,51 @@ final class ExchangeCalculatorViewModel {
     // MARK: - Input handlers
 
     /// User edited the USDc field. Re-derives `foreignAmount` using the
-    /// current rate's `bid` (USDc→foreign direction).
+    /// current rate's `bid` (USDc→foreign direction). Input is clamped
+    /// to at most 2 decimal places; extra digits are dropped before
+    /// being written back, and SwiftUI reconciles the `TextField` to
+    /// the clamped value.
     ///
     /// - Parameter newValue: raw text from the `TextField`.
     func usdcAmountChanged(_ newValue: String) {
-        usdcAmount = newValue
+        let clamped = Self.clampToTwoDecimalPlaces(newValue)
+        usdcAmount = clamped
         guard let rate = currentRate else { return }
-        if newValue.isEmpty {
+        if clamped.isEmpty {
             foreignAmount = ""
             return
         }
-        guard let parsed = Self.parse(newValue) else { return }
+        guard let parsed = Self.parse(clamped) else { return }
         let converted = parsed * rate.bid
         foreignAmount = Self.format(converted)
     }
 
     /// User edited the foreign field. Re-derives `usdcAmount` using the
-    /// current rate's `ask` (foreign→USDc direction).
+    /// current rate's `ask` (foreign→USDc direction). Input is clamped
+    /// to at most 2 decimal places.
     ///
     /// - Parameter newValue: raw text from the `TextField`.
     func foreignAmountChanged(_ newValue: String) {
-        foreignAmount = newValue
+        let clamped = Self.clampToTwoDecimalPlaces(newValue)
+        foreignAmount = clamped
         guard let rate = currentRate, rate.ask != 0 else { return }
-        if newValue.isEmpty {
+        if clamped.isEmpty {
             usdcAmount = ""
             return
         }
-        guard let parsed = Self.parse(newValue) else { return }
+        guard let parsed = Self.parse(clamped) else { return }
         let converted = parsed / rate.ask
         usdcAmount = Self.format(converted)
     }
 
     // MARK: - Commands
 
-    /// Swaps the two displayed amount strings.
-    ///
-    /// This is a visual-only swap — it does **not** recompute using the
-    /// current rate, and the currency assignments stay the same (USDc is
-    /// always USDc). If the product intent later changes to "flip which
-    /// side is authoritative and recompute the other," this function will
-    /// need a direction-state companion; today the plan says swap amounts.
+    /// Toggles `isSwapped` so the view flips which row is on top.
+    /// Amounts and currency associations stay with their rows — the USDc
+    /// amount is still the USDc amount, and the foreign amount is still
+    /// the foreign amount. Only their layout position changes.
     func swapCurrencies() {
-        let temp = usdcAmount
-        usdcAmount = foreignAmount
-        foreignAmount = temp
+        isSwapped.toggle()
     }
 
     /// Sets the selected foreign currency and invalidates any stale rate.
@@ -254,6 +261,32 @@ final class ExchangeCalculatorViewModel {
             }
         }
         return nil
+    }
+
+    /// Clamps user-typed text to at most 2 decimal places. Preserves
+    /// partial input like `"1."` or `""` (typing in progress).
+    /// Locale-aware: honors the current decimal separator and also
+    /// accepts an ASCII dot on comma-locale keyboards.
+    ///
+    /// If the input contains more than one separator (e.g. `"1.2.3"`)
+    /// only the first one is kept; extras are dropped. This makes the
+    /// output well-formed even for malformed keystrokes.
+    static func clampToTwoDecimalPlaces(_ input: String, locale: Locale = .current) -> String {
+        let localeSeparator = locale.decimalSeparator ?? "."
+        // Pick whichever separator the user actually typed.
+        let effectiveSeparator: String = {
+            if localeSeparator != "." && input.contains(localeSeparator) { return localeSeparator }
+            if input.contains(".") { return "." }
+            return localeSeparator
+        }()
+        guard let firstRange = input.range(of: effectiveSeparator) else { return input }
+        // Integer part is everything before the first separator (preserved as-is).
+        let integerPart = String(input[..<firstRange.upperBound])
+        // Fractional side: strip any additional separators so "1.2.3" → "23"
+        // before truncating to 2 chars.
+        let rawFractional = input[firstRange.upperBound...]
+        let sanitizedFractional = rawFractional.replacingOccurrences(of: effectiveSeparator, with: "")
+        return integerPart + sanitizedFractional.prefix(2)
     }
 
     /// Matches `[-]? digits [. digits]?` — a plain decimal number with

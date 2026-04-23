@@ -63,13 +63,42 @@ struct ExchangeCalculatorViewModelTests {
     // MARK: - Swap
 
     @Test
-    func swapExchangesAmounts() async {
+    func swapTogglesIsSwappedFlag() async {
+        let (vm, _) = await makeVM()
+        #expect(vm.isSwapped == false, "Defaults to USDc-on-top")
+        vm.swapCurrencies()
+        #expect(vm.isSwapped == true)
+        vm.swapCurrencies()
+        #expect(vm.isSwapped == false)
+    }
+
+    @Test
+    func swapDoesNotMutateAmounts() async {
+        // Rows move as atomic units — the USDc amount stays the USDc amount
+        // regardless of display position.
         let (vm, _) = await makeVM()
         vm.usdcAmount = "1.00"
         vm.foreignAmount = "18.41"
         vm.swapCurrencies()
-        #expect(vm.usdcAmount == "18.41")
-        #expect(vm.foreignAmount == "1.00")
+        #expect(vm.usdcAmount == "1.00")
+        #expect(vm.foreignAmount == "18.41")
+    }
+
+    @Test
+    func editingAfterSwapUpdatesCurrencyBoundFieldNotVisualPosition() async {
+        // Lock in: after swap, `usdcAmountChanged` still drives the
+        // foreign amount via × bid (USDc→foreign math), regardless of
+        // which row is displayed on top. Rows are a view concern; the
+        // VM's input handlers stay currency-bound.
+        let (vm, _) = await makeVM(
+            ask: Decimal(string: "20")!,
+            bid: Decimal(string: "10")!
+        )
+        vm.swapCurrencies()
+        #expect(vm.isSwapped == true)
+        vm.usdcAmountChanged("2")
+        #expect(vm.usdcAmount == "2")
+        #expect(vm.foreignAmount == "20.00", "USDc→foreign still uses × bid (2 × 10 = 20)")
     }
 
     // MARK: - Currency selection
@@ -255,6 +284,57 @@ struct ExchangeCalculatorViewModelTests {
         // depending on timing — but errorMessage must never be set for an
         // intentional cancellation.
         #expect(vm.errorMessage == nil)
+    }
+
+    // MARK: - Max-two-decimal clamping
+
+    @Test
+    func clampKeepsUpToTwoDecimalPlaces() {
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.2", locale: .init(identifier: "en_US")) == "1.2")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.23", locale: .init(identifier: "en_US")) == "1.23")
+    }
+
+    @Test
+    func clampTruncatesExcessDecimalDigits() {
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.234", locale: .init(identifier: "en_US")) == "1.23")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("0.12345", locale: .init(identifier: "en_US")) == "0.12")
+    }
+
+    @Test
+    func clampPreservesPartialInput() {
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("", locale: .init(identifier: "en_US")) == "")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.", locale: .init(identifier: "en_US")) == "1.")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("123", locale: .init(identifier: "en_US")) == "123")
+    }
+
+    @Test
+    func clampRespectsCommaLocale() {
+        let spain = Locale(identifier: "es_ES")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1,234", locale: spain) == "1,23")
+    }
+
+    @Test
+    func clampDropsRepeatedSeparators() {
+        // Regression: previously this produced "1.2." (malformed).
+        let us = Locale(identifier: "en_US")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.2.3", locale: us) == "1.23")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1.2.3.4", locale: us) == "1.23")
+        let spain = Locale(identifier: "es_ES")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("1,2,3", locale: spain) == "1,23")
+    }
+
+    @Test
+    func clampHandlesNegativeAndLeadingSeparator() {
+        let us = Locale(identifier: "en_US")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces("-1.234", locale: us) == "-1.23")
+        #expect(ExchangeCalculatorViewModel.clampToTwoDecimalPlaces(".5", locale: us) == ".5")
+    }
+
+    @Test
+    func usdcChangedClampsInputInPlace() async {
+        let (vm, _) = await makeVM()
+        vm.usdcAmountChanged("1.2345")
+        #expect(vm.usdcAmount == "1.23")
     }
 
     // MARK: - Currency list fallback

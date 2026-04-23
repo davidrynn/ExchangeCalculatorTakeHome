@@ -303,7 +303,9 @@ final class ExchangeCalculatorViewModel {
     /// Called when the user edits the foreign field; recalculates usdcAmount.
     func foreignAmountChanged(_ newValue: String)
 
-    /// Swaps USDc ↔ selected currency positions (swaps displayed amounts).
+    /// Toggles `isSwapped`, flipping which row the view renders on top.
+    /// Does not touch amounts or currency assignments — rows move as
+    /// atomic units, carrying their values with them.
     func swapCurrencies()
 
     /// Sets selectedCurrency and re-converts using the currently held rate.
@@ -330,7 +332,7 @@ final class ExchangeCalculatorViewModel {
 - [ ] `@MainActor @Observable` ViewModel with all state properties
 - [ ] `usdcAmountChanged` → updates `foreignAmount` using `rate.bid` (multiply)
 - [ ] `foreignAmountChanged` → updates `usdcAmount` using `rate.ask` (divide)
-- [ ] `swapCurrencies` — swaps displayed amounts and positions flag
+- [ ] `swapCurrencies` — toggles `isSwapped` flag; values/currencies stay paired (rows move as atomic units)
 - [ ] `selectCurrency` — updates selected currency, triggers in-memory re-conversion using the current mock rate
 - [ ] Input guard: non-numeric / NaN / Inf ignored; empty string clears the other field
 - [ ] Number formatting helper uses `Decimal.FormatStyle` (value type, inherently `Sendable`) — no shared `NumberFormatter`
@@ -340,7 +342,7 @@ final class ExchangeCalculatorViewModel {
 Using `MockExchangeRateService` (pre-seeded with fixture rates). Tests are `@MainActor` so they can read VM state directly.
 - [ ] `usdcAmountChanged("1")` → `foreignAmount` equals `bid` formatted to 2dp (regression guard for bid/ask direction)
 - [ ] `foreignAmountChanged("18.40")` → `usdcAmount` equals `18.40 / ask` formatted (regression guard)
-- [ ] `swapCurrencies` — amounts swap correctly
+- [ ] `swapCurrencies` — toggles `isSwapped`; does NOT mutate amounts
 - [ ] `selectCurrency` — `selectedCurrency` updates; re-conversion uses new rate
 - [ ] Empty input → other field clears to `""`
 - [ ] Non-numeric input ignored (no crash, no update)
@@ -408,7 +410,7 @@ feat: viewmodel — two-way conversion, swap logic, bid/ask math, error handling
 - [ ] `testUSDCInputUpdatesForeignField` — type "1" in `usdcAmountField`, `foreignAmountField` shows non-zero value
 - [ ] `testForeignInputUpdatesUSDCField` — type amount in `foreignAmountField`, `usdcAmountField` updates
 - [ ] `testSwapButtonExists` — `swapButton` is hittable
-- [ ] `testSwapButtonSwapsValues` — tap swap, field positions invert
+- [ ] `testSwapButtonSwapsRowPositions` — tap swap, foreign row moves above USDc row (frame.minY inverts), amounts stay attached to their currencies
 
 ### Testing Commands
 ```bash
@@ -564,7 +566,7 @@ polish: input validation, number formatting, accessibility labels, UX edge cases
 - [ ] App launch → fields visible, rate shown
 - [ ] Type in USDc → foreign updates
 - [ ] Type in foreign → USDc updates
-- [ ] Tap swap → values and positions exchange
+- [ ] Tap swap → row positions flip; amounts stay attached to their currencies
 - [ ] Tap currency → picker opens → select currency → picker closes → code updated
 - [ ] Network error scenario (mock offline) → error banner appears
 

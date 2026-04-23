@@ -47,6 +47,8 @@ struct CurrencyInputRow: View {
                 .multilineTextAlignment(.trailing)
                 .font(.body.weight(.bold))
                 .foregroundStyle(Color(.label))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
                 .accessibilityIdentifier(amountFieldIdentifier)
                 .accessibilityLabel(accessibilityAmountLabel)
         }

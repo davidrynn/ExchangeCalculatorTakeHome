@@ -35,33 +35,39 @@ final class CalculatorUITests: XCTestCase {
     }
 
     @MainActor
-    func testSwapButtonSwapsValues() {
+    func testSwapButtonSwapsRowPositions() {
         let app = makeApp()
         app.launch()
 
         let usdcField = app.textFields["usdcAmountField"]
         let foreignField = app.textFields["foreignAmountField"]
         XCTAssertTrue(usdcField.waitForExistence(timeout: 5))
+        XCTAssertTrue(foreignField.exists)
 
-        // Seed both fields with distinct values. Without a loaded rate
-        // (rate loading lands in Phase 5), typing into USDc does not
-        // auto-fill foreign — so we type into each field independently.
+        // Initially, USDc is on top (smaller Y) and foreign is below it.
+        let initialUSDcY = usdcField.frame.minY
+        let initialForeignY = foreignField.frame.minY
+        XCTAssertLessThan(initialUSDcY, initialForeignY,
+                          "USDc row should start above the foreign row")
+
+        // Seed each field with a value; swap must not touch the values.
         usdcField.tap()
         usdcField.typeText("11")
-
         foreignField.tap()
         foreignField.typeText("22")
 
-        let beforeSwapUSDc = (usdcField.value as? String) ?? ""
-        let beforeSwapForeign = (foreignField.value as? String) ?? ""
-        XCTAssertEqual(beforeSwapUSDc, "11")
-        XCTAssertEqual(beforeSwapForeign, "22")
-
         app.buttons["swapButton"].tap()
 
-        let afterSwapUSDc = (usdcField.value as? String) ?? ""
-        let afterSwapForeign = (foreignField.value as? String) ?? ""
-        XCTAssertEqual(afterSwapUSDc, "22", "USDc should now hold the prior foreign value")
-        XCTAssertEqual(afterSwapForeign, "11", "Foreign should now hold the prior USDc value")
+        // Positions inverted: foreign row is now above USDc row.
+        let swappedUSDcY = app.textFields["usdcAmountField"].frame.minY
+        let swappedForeignY = app.textFields["foreignAmountField"].frame.minY
+        XCTAssertGreaterThan(swappedUSDcY, swappedForeignY,
+                             "After swap, foreign row should be above USDc row")
+
+        // Values stay attached to their rows.
+        XCTAssertEqual(app.textFields["usdcAmountField"].value as? String, "11",
+                       "USDc amount stays with USDc row across a swap")
+        XCTAssertEqual(app.textFields["foreignAmountField"].value as? String, "22",
+                       "Foreign amount stays with foreign row across a swap")
     }
 }

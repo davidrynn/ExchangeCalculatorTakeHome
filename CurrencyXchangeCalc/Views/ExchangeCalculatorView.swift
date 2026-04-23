@@ -34,7 +34,12 @@ struct ExchangeCalculatorView: View {
 
     var body: some View {
         ZStack {
-            Color(hex: 0xF8F8F8).ignoresSafeArea()
+            Color(hex: 0xF8F8F8)
+                .ignoresSafeArea()
+                // Tap the background to dismiss the numeric keyboard;
+                // decimalPad has no Return key of its own.
+                .contentShape(Rectangle())
+                .onTapGesture { Self.dismissKeyboard() }
 
             VStack(alignment: .leading, spacing: 24) {
                 header
@@ -50,6 +55,14 @@ struct ExchangeCalculatorView: View {
             if viewModel.isLoading {
                 ProgressView()
                     .accessibilityIdentifier("loadingIndicator")
+                    .accessibilityLabel("Loading exchange rates")
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { Self.dismissKeyboard() }
+                    .accessibilityIdentifier("keyboardDone")
             }
         }
         // Load the currency list once on appear.
@@ -107,31 +120,44 @@ struct ExchangeCalculatorView: View {
     private var amountStack: some View {
         ZStack {
             VStack(spacing: 16) {
-                CurrencyInputRow(
-                    currency: Self.usdcCurrency,
-                    isTappable: false,
-                    amount: Binding(
-                        get: { viewModel.usdcAmount },
-                        set: { viewModel.usdcAmountChanged($0) }
-                    ),
-                    amountFieldIdentifier: "usdcAmountField"
-                )
-                CurrencyInputRow(
-                    currency: viewModel.selectedCurrency,
-                    isTappable: true,
-                    amount: Binding(
-                        get: { viewModel.foreignAmount },
-                        set: { viewModel.foreignAmountChanged($0) }
-                    ),
-                    amountFieldIdentifier: "foreignAmountField",
-                    currencyLabelIdentifier: "foreignCurrencyPicker",
-                    onTapCurrency: {
-                        isCurrencyPickerPresented = true
-                    }
-                )
+                if viewModel.isSwapped {
+                    foreignRow
+                    usdcRow
+                } else {
+                    usdcRow
+                    foreignRow
+                }
             }
             SwapButton(action: { viewModel.swapCurrencies() })
         }
+    }
+
+    private var usdcRow: some View {
+        CurrencyInputRow(
+            currency: Self.usdcCurrency,
+            isTappable: false,
+            amount: Binding(
+                get: { viewModel.usdcAmount },
+                set: { viewModel.usdcAmountChanged($0) }
+            ),
+            amountFieldIdentifier: "usdcAmountField"
+        )
+    }
+
+    private var foreignRow: some View {
+        CurrencyInputRow(
+            currency: viewModel.selectedCurrency,
+            isTappable: true,
+            amount: Binding(
+                get: { viewModel.foreignAmount },
+                set: { viewModel.foreignAmountChanged($0) }
+            ),
+            amountFieldIdentifier: "foreignAmountField",
+            currencyLabelIdentifier: "foreignCurrencyPicker",
+            onTapCurrency: {
+                isCurrencyPickerPresented = true
+            }
+        )
     }
 
     private func errorBanner(message: String) -> some View {
@@ -180,6 +206,18 @@ struct ExchangeCalculatorView: View {
 
     private func formattedRate(_ rate: Decimal) -> String {
         rate.formatted(.number.precision(.fractionLength(2...4)))
+    }
+
+    // MARK: - Keyboard
+
+    /// Resign first responder on any currently-focused UITextField.
+    /// Used by the background tap handler and the keyboard toolbar's
+    /// Done button since `decimalPad` has no built-in return key.
+    private static func dismissKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
     }
 }
 

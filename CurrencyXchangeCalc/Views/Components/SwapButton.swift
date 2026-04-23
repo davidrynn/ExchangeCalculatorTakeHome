@@ -13,7 +13,7 @@ struct SwapButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "arrow.up.arrow.down")
+            Image(systemName: "arrow.down")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 24, height: 24)
