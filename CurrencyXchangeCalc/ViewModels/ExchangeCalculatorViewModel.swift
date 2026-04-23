@@ -156,9 +156,13 @@ final class ExchangeCalculatorViewModel {
             // Preserve flag + display name from fallback metadata when a
             // server code matches; anything novel is appended with best-
             // effort labels.
-            let existing = Dictionary(uniqueKeysWithValues: Currency.fallbackList.map { ($0.code, $0) })
+            // Case-insensitive lookup so API codes like "EURC" pick up
+            // the fallback metadata stored under "EURc".
+            let existing = Dictionary(
+                uniqueKeysWithValues: Currency.fallbackList.map { ($0.code.uppercased(), $0) }
+            )
             let merged: [Currency] = codes.map { code in
-                existing[code] ?? Currency(code: code, flagEmoji: "🏳️", displayName: code)
+                existing[code.uppercased()] ?? Currency(code: code, flagEmoji: "🏳️", displayName: code)
             }
             availableCurrencies = merged.isEmpty ? Currency.fallbackList : merged
         } catch ServiceError.unavailable {
@@ -207,7 +211,11 @@ final class ExchangeCalculatorViewModel {
         do {
             let rates = try await service.fetchRates(for: [selectedCurrency.code])
             guard generation == loadGeneration, !Task.isCancelled else { return }
-            if let rate = rates.first(where: { $0.currencyCode == selectedCurrency.code }) {
+            // Case-insensitive match so mixed-case display codes like
+            // "EURc" match API-extracted uppercase codes like "EURC".
+            if let rate = rates.first(where: {
+                $0.currencyCode.caseInsensitiveCompare(selectedCurrency.code) == .orderedSame
+            }) {
                 currentRate = rate
                 recalculateAfterRateUpdate()
             }

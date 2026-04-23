@@ -113,9 +113,11 @@ struct ExchangeCalculatorViewModelTests {
 
     @Test
     func selectingDifferentCurrencyInvalidatesStaleRate() async {
-        let (vm, _) = await makeVM(currency: Currency.fallbackList[0]) // MXN
+        let mxn = Currency.fallbackList.first { $0.code == "MXN" }!
+        let ars = Currency.fallbackList.first { $0.code == "ARS" }!
+        let (vm, _) = await makeVM(currency: mxn)
         #expect(vm.currentRate != nil)
-        vm.selectCurrency(Currency.fallbackList[1]) // ARS
+        vm.selectCurrency(ars)
         // Rate was for MXN — should be cleared when we switch to ARS
         // because the view has not yet triggered a new loadRates.
         #expect(vm.currentRate == nil)
@@ -351,6 +353,29 @@ struct ExchangeCalculatorViewModelTests {
                 "Should fall back to Currency.fallbackList when fetchCurrencies throws")
         #expect(vm.errorMessage == nil,
                 "Currency-list failure is non-critical and must not surface a user error")
+    }
+
+    @Test
+    func eurcMatchesCaseInsensitivelyAgainstAPIUppercasedCode() async {
+        // Regression: EURc is stored with mixed case in fallbackList for
+        // display, but currencyCode from the API always uppercases to
+        // "EURC". Make sure the VM's rate match still finds it.
+        let mock = MockExchangeRateService()
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "1.08")!,
+                bid: Decimal(string: "1.07")!,
+                book: "usdc_eurc",
+                date: ""
+            )
+        ]
+        let eurc = Currency.fallbackList.first { $0.code == "EURc" }!
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: eurc)
+
+        await vm.loadRates()
+
+        #expect(vm.currentRate != nil, "EURc (display) must match EURC (API) case-insensitively")
+        #expect(vm.errorMessage == nil)
     }
 
     @Test

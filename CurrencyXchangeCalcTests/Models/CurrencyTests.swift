@@ -4,9 +4,9 @@ import Testing
 struct CurrencyTests {
     @Test
     func fallbackListHasExpectedCurrencies() {
-        #expect(Currency.fallbackList.count == 4)
+        #expect(Currency.fallbackList.count == 5)
         let codes = Currency.fallbackList.map(\.code)
-        #expect(codes == ["MXN", "ARS", "BRL", "COP"])
+        #expect(Set(codes) == Set(["MXN", "EURc", "ARS", "BRL", "COP"]))
     }
 
     @Test

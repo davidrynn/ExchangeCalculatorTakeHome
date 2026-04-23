@@ -94,7 +94,7 @@ struct ExchangeCalculatorView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Exchange")
+            Text("Exchange calculator")
                 .font(.system(size: 30, weight: .bold))
                 .foregroundStyle(Color(hex: 0x2C2C2E))
                 .accessibilityIdentifier("exchangeTitle")

@@ -28,13 +28,24 @@ struct CurrencyPickerSheet: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("currencyPickerRow.\(currency.code)")
+                .listRowBackground(Color.white)
             }
-            .navigationTitle("Select currency")
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.white)
+            .navigationTitle("Choose currency")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Cancel") { dismiss() }
-                        .accessibilityIdentifier("currencyPickerCancel")
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Color(hex: 0x2C2C2E))
+                    }
+                    .accessibilityLabel("Close")
+                    .accessibilityIdentifier("currencyPickerCancel")
                 }
             }
         }
