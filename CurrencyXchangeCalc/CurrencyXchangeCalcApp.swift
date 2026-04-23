@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// No-op service used when the app is launched by UI tests. Both calls
-/// throw, so the VM ends up with no `currentRate` and UI tests get
-/// deterministic empty fields instead of fighting live API latency.
+/// No-op service used when `-UITEST_DISABLE_NETWORK` is passed. Both
+/// calls throw, so the VM ends up with no `currentRate` and UI tests
+/// get deterministic empty fields instead of fighting live API latency.
 private struct NoopUITestService: ExchangeRateServiceProtocol {
     func fetchRates(for currencies: [String]) async throws -> [ExchangeRate] {
         throw CancellationError()
@@ -12,20 +12,55 @@ private struct NoopUITestService: ExchangeRateServiceProtocol {
     }
 }
 
+/// UI-test service that returns a fixed MXN rate so input-reflection
+/// tests have a predictable multiplier. Active when
+/// `-UITEST_SEED_RATE` is passed.
+private struct SeededRateUITestService: ExchangeRateServiceProtocol {
+    func fetchRates(for currencies: [String]) async throws -> [ExchangeRate] {
+        [
+            ExchangeRate(
+                ask: Decimal(string: "20")!,
+                bid: Decimal(string: "10")!,
+                book: "usdc_mxn",
+                date: ""
+            )
+        ]
+    }
+    func fetchCurrencies() async throws -> [String] {
+        Currency.fallbackList.map(\.code)
+    }
+}
+
+/// UI-test service that throws a network error on `fetchRates` so the
+/// error banner shows. Active when `-UITEST_FAIL_RATES` is passed.
+private struct FailingRatesUITestService: ExchangeRateServiceProtocol {
+    func fetchRates(for currencies: [String]) async throws -> [ExchangeRate] {
+        throw ServiceError.networkError("Simulated offline")
+    }
+    func fetchCurrencies() async throws -> [String] {
+        throw ServiceError.unavailable
+    }
+}
+
 @main
 struct CurrencyXchangeCalcApp: App {
     /// Composition root. Owns the live service and builds the top-level
-    /// view model explicitly so tests / previews can substitute their own
-    /// service implementations downstream. UI tests pass
-    /// `-UITEST_DISABLE_NETWORK` as a launch argument to get a
-    /// deterministic no-rate state.
+    /// view model explicitly so tests / previews can substitute their
+    /// own service implementations downstream.
     @State private var viewModel: ExchangeCalculatorViewModel
 
     init() {
-        let service: ExchangeRateServiceProtocol =
-            ProcessInfo.processInfo.arguments.contains("-UITEST_DISABLE_NETWORK")
-                ? NoopUITestService()
-                : LiveExchangeRateService()
+        let args = ProcessInfo.processInfo.arguments
+        let service: ExchangeRateServiceProtocol
+        if args.contains("-UITEST_FAIL_RATES") {
+            service = FailingRatesUITestService()
+        } else if args.contains("-UITEST_SEED_RATE") {
+            service = SeededRateUITestService()
+        } else if args.contains("-UITEST_DISABLE_NETWORK") {
+            service = NoopUITestService()
+        } else {
+            service = LiveExchangeRateService()
+        }
         _viewModel = State(wrappedValue: ExchangeCalculatorViewModel(service: service))
     }
 

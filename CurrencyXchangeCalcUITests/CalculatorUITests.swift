@@ -13,6 +13,24 @@ final class CalculatorUITests: XCTestCase {
         return app
     }
 
+    /// App launched with a seeded fixed rate (bid=10, ask=20 on MXN) so
+    /// input-reflection assertions have a predictable multiplier.
+    @MainActor
+    private func makeAppWithSeededRate() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_SEED_RATE"]
+        return app
+    }
+
+    /// App launched with a service that throws on `fetchRates`, so the
+    /// error banner shows.
+    @MainActor
+    private func makeAppWithFailingRates() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_FAIL_RATES"]
+        return app
+    }
+
     @MainActor
     func testCalculatorLoads() {
         let app = makeApp()
@@ -32,6 +50,61 @@ final class CalculatorUITests: XCTestCase {
         let swap = app.buttons["swapButton"]
         XCTAssertTrue(swap.waitForExistence(timeout: 5))
         XCTAssertTrue(swap.isHittable)
+    }
+
+    @MainActor
+    func testUSDCInputUpdatesForeignField() {
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let usdcField = app.textFields["usdcAmountField"]
+        let foreignField = app.textFields["foreignAmountField"]
+        XCTAssertTrue(usdcField.waitForExistence(timeout: 5))
+
+        // Wait for the seeded rate to load so the conversion fires.
+        let rate = app.staticTexts["rateSummaryLabel"]
+        _ = rate.waitForExistence(timeout: 5)
+
+        usdcField.tap()
+        usdcField.typeText("2")
+
+        // Seeded bid = 10 → 2 USDc × 10 = 20 MXN, formatted to 2dp.
+        let foreignValue = foreignField.value as? String ?? ""
+        XCTAssertEqual(foreignValue, "20.00",
+                       "Foreign field should reflect 2 × bid(10) = 20.00")
+    }
+
+    @MainActor
+    func testForeignInputUpdatesUSDCField() {
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let usdcField = app.textFields["usdcAmountField"]
+        let foreignField = app.textFields["foreignAmountField"]
+        XCTAssertTrue(foreignField.waitForExistence(timeout: 5))
+
+        _ = app.staticTexts["rateSummaryLabel"].waitForExistence(timeout: 5)
+
+        foreignField.tap()
+        foreignField.typeText("40")
+
+        // Seeded ask = 20 → 40 MXN ÷ 20 = 2 USDc, formatted to 2dp.
+        let usdcValue = usdcField.value as? String ?? ""
+        XCTAssertEqual(usdcValue, "2.00",
+                       "USDc field should reflect 40 ÷ ask(20) = 2.00")
+    }
+
+    @MainActor
+    func testNetworkErrorShowsErrorBanner() {
+        let app = makeAppWithFailingRates()
+        app.launch()
+
+        // The Retry button is unique to the error banner and is a
+        // reliably-queryable element. If it appears, the banner rendered.
+        let retry = app.buttons["errorRetry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5),
+                      "Error banner with Retry should appear when the service throws on fetchRates")
+        XCTAssertTrue(retry.isHittable)
     }
 
     @MainActor

@@ -196,6 +196,10 @@ struct ExchangeCalculatorView: View {
             .padding(12)
             .background(Color.red.opacity(0.9), in: RoundedRectangle(cornerRadius: 12))
             .padding(.horizontal, 16)
+            // `children: .contain` so the Retry / Dismiss buttons keep
+            // their own accessibilityIdentifiers (the container's id
+            // would otherwise cascade and override them).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("errorBanner")
             Spacer()
         }
