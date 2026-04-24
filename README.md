@@ -103,6 +103,10 @@ API book `usdc_xxx` means USDc is base, foreign is quote.
 - `GET https://api.dolarapp.dev/v1/tickers?currencies=MXN,ARS` — live rates (used).
 - `GET https://api.dolarapp.dev/v1/tickers-currencies` — currency list (not yet deployed; the app falls back silently to a hardcoded list when it 404s).
 
+## Spec clarifications
+
+The recruiter confirmed (2026-04-24) that the currency list should reflect "whatever the endpoint returns," with a local fallback standing in until the endpoint ships. The fallback therefore mirrors the spec's example response exactly (`MXN`, `ARS`, `BRL`, `COP`) — the Figma shows EURc but that was treated as aspirational mock content, not a binding requirement. All other judgment-call items (currency symbol, loading/error states, summary precision, initial currency, keyboard dismiss) are documented with rationale in `Docs/ImplementationPlan.md` under *Spec Clarifications — Recruiter Q&A*.
+
 ## Testing
 
 66 tests total (53 unit + 10 UI + 3 launch):

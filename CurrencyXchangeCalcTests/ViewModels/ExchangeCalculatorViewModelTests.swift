@@ -356,10 +356,12 @@ struct ExchangeCalculatorViewModelTests {
     }
 
     @Test
-    func eurcMatchesCaseInsensitivelyAgainstAPIUppercasedCode() async {
-        // Regression: EURc is stored with mixed case in fallbackList for
-        // display, but currencyCode from the API always uppercases to
-        // "EURC". Make sure the VM's rate match still finds it.
+    func mixedCaseDisplayCodeMatchesUppercaseAPICode() async {
+        // Guard: the VM uses case-insensitive matching so a
+        // mixed-case display code (e.g. a future stablecoin like
+        // "EURc" or "USDc") still matches the API-extracted uppercase
+        // code. No mixed-case codes ship in fallbackList today, but
+        // the matching logic is defensive.
         let mock = MockExchangeRateService()
         mock.stubbedRates = [
             ExchangeRate(
@@ -369,12 +371,13 @@ struct ExchangeCalculatorViewModelTests {
                 date: ""
             )
         ]
-        let eurc = Currency.fallbackList.first { $0.code == "EURc" }!
-        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: eurc)
+        let mixedCase = Currency(code: "EURc", flagEmoji: "🇪🇺", displayName: "Euro Coin")
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: mixedCase)
 
         await vm.loadRates()
 
-        #expect(vm.currentRate != nil, "EURc (display) must match EURC (API) case-insensitively")
+        #expect(vm.currentRate != nil,
+                "Mixed-case display code must match API-uppercased code case-insensitively")
         #expect(vm.errorMessage == nil)
     }
 

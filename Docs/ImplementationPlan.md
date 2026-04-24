@@ -8,6 +8,34 @@ Starting point: Xcode scaffold only — `ContentView.swift` and `CurrencyXchange
 
 ---
 
+## Spec Clarifications — Recruiter Q&A (2026-04-24)
+
+Submitted a batch of ambiguity questions before final submission; the recruiter's response shaped the following decisions:
+
+**Currency list (directed):**
+> "The app should show whatever the endpoint returns. For this exercise, that means using a local fallback list until the endpoint is shipped, since that endpoint is intentionally missing as part of the test."
+
+- `Currency.fallbackList` mirrors the spec's example response exactly: `["MXN", "ARS", "BRL", "COP"]`.
+- No EURc, despite the Figma showing it in the picker — the Figma visual was taken as an aspirational mock, not a binding requirement for the fallback content.
+- When `/tickers-currencies` ships, the VM's `loadAvailableCurrencies()` replaces the fallback with whatever the endpoint returns; metadata (flag, displayName) is merged from the fallback when codes overlap.
+
+**Everything else — candidate's judgment:**
+> "For the rest of the points (currency symbols, loading/error states, summary precision, and initial foreign currency behavior) there isn't a prescribed answer. The team is happy for you to use your own judgment there, so long as your choices are sensible and consistent."
+
+| Area | Choice | Rationale |
+|---|---|---|
+| **Currency symbol** | None — amounts are symbol-less; flag + ISO code gives currency context | Avoids per-locale symbol lookup logic and the ambiguity of showing `$` on non-USD amounts |
+| **Loading state** | Centered `ProgressView` with VoiceOver label "Loading exchange rates" | Live fetch is typically ~200 ms; anything heavier would visually flicker |
+| **Error state** | Red dismissible banner with Retry button; cancellation errors never surfaced | Retry re-enters the `.task(id:)` load path via a bumped `retryToken` (structured concurrency, no detached `Task`) |
+| **Summary precision** | `Decimal.FormatStyle.precision(.fractionLength(2...4))` — shows 2–4 fractional digits | API returns 10 digits; 2–4 is a compromise between readability and rate accuracy |
+| **Input validation** | Max 2 decimal places, clamped during typing; locale-aware separator; strict parse rejects `"1.2.3"` | Matches typical currency UX; 2dp is the standard display precision for user-facing money |
+| **Initial currency** | Hardcoded MXN on first launch; no persistence | No persistence spec; adding UserDefaults would be scope creep |
+| **Keyboard dismiss** | Done button in a keyboard toolbar + tap-outside to dismiss | iOS-standard pattern; Figma's always-visible keypad is atypical for real devices |
+
+These choices are documented alongside the code they inform (Currency.swift, loadRates/loadAvailableCurrencies, ExchangeCalculatorView, clampToTwoDecimalPlaces) and locked in by tests.
+
+---
+
 ## Overall Checklist
 
 - [x] Phase 0 — Architecture design & file scaffold
