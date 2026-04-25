@@ -106,6 +106,14 @@ final class ExchangeCalculatorViewModel {
     ///
     /// - Parameter newValue: raw text from the `TextField`.
     func usdcAmountChanged(_ newValue: String) {
+        // Idempotent guard. SwiftUI can re-fire the binding setter on
+        // focus changes / rebinds with the *current* displayed string;
+        // without this guard, every focus tap would flip
+        // `lastEditedSide` and recompute the opposite side, drifting
+        // values via the bid/ask spread. Must come BEFORE any state
+        // mutation so a no-op call really is a no-op.
+        guard newValue != usdcAmount else { return }
+
         usdcAmount = newValue
         lastEditedSide = .usdc
 
@@ -136,6 +144,9 @@ final class ExchangeCalculatorViewModel {
     ///
     /// - Parameter newValue: raw text from the `TextField`.
     func foreignAmountChanged(_ newValue: String) {
+        // Idempotent guard — see usdcAmountChanged. Must come first.
+        guard newValue != foreignAmount else { return }
+
         foreignAmount = newValue
         lastEditedSide = .foreign
 

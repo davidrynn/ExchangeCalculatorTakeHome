@@ -250,6 +250,50 @@ struct ExchangeCalculatorViewModelTests {
     }
 
     @Test
+    func reInvokingForeignChangedWithSameValueIsNoop() async {
+        // Reported bug: "tapping back and forth changes the numbers."
+        // Root cause: SwiftUI fires the binding setter on focus / rebind
+        // with the existing display string. Without an idempotent guard,
+        // each tap flips lastEditedSide and re-derives the opposite
+        // side via the asymmetric bid/ask, causing drift.
+        let (vm, _) = await makeVM()
+        vm.usdcAmountChanged("1")
+        let snapshotUsdc = vm.usdcAmount
+        let snapshotForeign = vm.foreignAmount
+        let snapshotUsdcDecimal = vm.usdcDecimal
+        let snapshotForeignDecimal = vm.foreignDecimal
+
+        // Simulate SwiftUI firing the foreign setter with the *current*
+        // foreign display value (a focus-fire, not a real edit).
+        vm.foreignAmountChanged(vm.foreignAmount)
+
+        #expect(vm.usdcAmount == snapshotUsdc, "USDc string drifted: \(vm.usdcAmount)")
+        #expect(vm.foreignAmount == snapshotForeign, "Foreign string drifted: \(vm.foreignAmount)")
+        #expect(vm.usdcDecimal == snapshotUsdcDecimal, "USDc decimal drifted")
+        #expect(vm.foreignDecimal == snapshotForeignDecimal, "Foreign decimal drifted")
+    }
+
+    @Test
+    func reInvokingUsdcChangedWithSameValueIsNoop() async {
+        // Inverse of the above — type in foreign, then re-fire USDc
+        // setter with the existing USDc display string. Nothing
+        // should change.
+        let (vm, _) = await makeVM()
+        vm.foreignAmountChanged("18.4069")
+        let snapshotUsdc = vm.usdcAmount
+        let snapshotForeign = vm.foreignAmount
+        let snapshotUsdcDecimal = vm.usdcDecimal
+        let snapshotForeignDecimal = vm.foreignDecimal
+
+        vm.usdcAmountChanged(vm.usdcAmount)
+
+        #expect(vm.usdcAmount == snapshotUsdc)
+        #expect(vm.foreignAmount == snapshotForeign)
+        #expect(vm.usdcDecimal == snapshotUsdcDecimal)
+        #expect(vm.foreignDecimal == snapshotForeignDecimal)
+    }
+
+    @Test
     func rateRefreshDoesNotMutateUserTypedSide() async {
         // Reported regression: typing 1 in foreign, then having the
         // rate refresh, would re-process the COMPUTED USDc display

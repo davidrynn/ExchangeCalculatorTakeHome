@@ -109,6 +109,44 @@ final class CalculatorUITests: XCTestCase {
     }
 
     @MainActor
+    func testTappingBackAndForthDoesNotChangeValues() {
+        // Reported bug: with values in both fields, tapping back and forth
+        // would change the numbers as SwiftUI's binding setter re-fired on
+        // focus events, flipping lastEditedSide and re-deriving via the
+        // asymmetric bid/ask spread. The idempotent guard in the setters
+        // prevents that. End-to-end live-binding regression.
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let usdcField = app.textFields["usdcAmountField"]
+        let foreignField = app.textFields["foreignAmountField"]
+        XCTAssertTrue(usdcField.waitForExistence(timeout: 5))
+        _ = app.staticTexts["rateSummaryLabel"].waitForExistence(timeout: 5)
+
+        // Type a value in USDc; foreign auto-fills from the seeded rate.
+        usdcField.tap()
+        usdcField.typeText("3")
+
+        let initialUSDc = (usdcField.value as? String) ?? ""
+        let initialForeign = (foreignField.value as? String) ?? ""
+        XCTAssertFalse(initialForeign.isEmpty)
+        XCTAssertNotEqual(initialForeign, "0.00")
+
+        // Tap back and forth several times — no edits, just focus moves.
+        for _ in 0..<4 {
+            foreignField.tap()
+            usdcField.tap()
+        }
+
+        let finalUSDc = (usdcField.value as? String) ?? ""
+        let finalForeign = (foreignField.value as? String) ?? ""
+        XCTAssertEqual(finalUSDc, initialUSDc,
+                       "USDc value should not drift on focus changes")
+        XCTAssertEqual(finalForeign, initialForeign,
+                       "Foreign value should not drift on focus changes")
+    }
+
+    @MainActor
     func testRetryReTriggersLoadAndBannerReappears() {
         let app = makeAppWithFailingRates()
         app.launch()
