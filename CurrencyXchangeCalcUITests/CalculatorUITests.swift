@@ -68,10 +68,11 @@ final class CalculatorUITests: XCTestCase {
         usdcField.tap()
         usdcField.typeText("2")
 
-        // Seeded bid = 10 → 2 USDc × 10 = 20 MXN, formatted to 2dp.
+        // Seeded bid = 10 → 2 USDc × 10 = 20 MXN, formatter shows
+        // 4 fractional digits min.
         let foreignValue = foreignField.value as? String ?? ""
-        XCTAssertEqual(foreignValue, "20.00",
-                       "Foreign field should reflect 2 × bid(10) = 20.00")
+        XCTAssertEqual(foreignValue, "20.0000",
+                       "Foreign field should reflect 2 × bid(10) = 20.0000")
     }
 
     @MainActor
@@ -88,10 +89,10 @@ final class CalculatorUITests: XCTestCase {
         foreignField.tap()
         foreignField.typeText("40")
 
-        // Seeded ask = 20 → 40 MXN ÷ 20 = 2 USDc, formatted to 2dp.
+        // Seeded ask = 20 → 40 MXN ÷ 20 = 2 USDc, formatted to 4dp min.
         let usdcValue = usdcField.value as? String ?? ""
-        XCTAssertEqual(usdcValue, "2.00",
-                       "USDc field should reflect 40 ÷ ask(20) = 2.00")
+        XCTAssertEqual(usdcValue, "2.0000",
+                       "USDc field should reflect 40 ÷ ask(20) = 2.0000")
     }
 
     @MainActor

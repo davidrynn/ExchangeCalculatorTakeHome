@@ -324,36 +324,39 @@ final class ExchangeCalculatorViewModel {
         return sawDigit
     }
 
-    /// Formats a `Decimal` using `Decimal.FormatStyle` with adaptive
-    /// precision. Default is 2 fractional digits. If the value is
-    /// non-zero but rounds to zero at 2dp (e.g. `1 ARS / ask(1551) ≈
-    /// 0.000645 USDc` would otherwise render as `"0.00"`), precision
-    /// extends up to 8 fractional digits so the user sees meaningful
-    /// output.
+    /// Formats a `Decimal` for display in the amount fields.
     ///
-    /// Value-type formatter, inherently `Sendable` — safe to use from
-    /// any isolation, unlike a shared `NumberFormatter`.
+    /// Always shows **between 4 and 8 fractional digits**. Value-type
+    /// formatter, inherently `Sendable` — safe to use from any
+    /// isolation, unlike a shared `NumberFormatter`.
+    ///
+    /// **Why this range — round-trip precision (the edge case):**
+    ///
+    /// At 2dp, `1 MXN ÷ ask(17.36) ≈ 0.05761` USDc displays as `"0.06"`.
+    /// The user re-types `0.06` in USDc and gets `0.06 × bid(17.34) ≈
+    /// 1.04 MXN` back, ~4% off from where they started. That looks like
+    /// a calculator bug.
+    ///
+    /// Bumping the minimum to 4 digits keeps `0.0576` USDc visible, and
+    /// re-entering it round-trips back to within 0.2% of the original
+    /// (the residual loss is the unavoidable bid/ask spread). Matches
+    /// how XE, Google's currency widget, and other exchange calculators
+    /// format. The `…8` upper bound lets currencies with a wide
+    /// USDc-to-foreign ratio (e.g. ARS at ask ≈ 1551 → 0.000645 USDc/peso)
+    /// still render meaningful significant digits.
+    ///
+    /// **Why not the alternative** (track a precise underlying `Decimal`
+    /// per field, display only 2dp): introduces parallel state where
+    /// the displayed value no longer reflects what the VM actually
+    /// holds, and adds complexity for marginal UX gain. The simpler
+    /// "show more digits" approach matches industry convention with no
+    /// extra state.
     static func format(_ value: Decimal, locale: Locale = .current) -> String {
-        let twoDpRounded = Self.rounded(value, toFractionDigits: 2)
-        if value != 0 && twoDpRounded == 0 {
-            return value.formatted(
-                .number
-                    .precision(.fractionLength(2...8))
-                    .locale(locale)
-            )
-        }
-        return value.formatted(
+        value.formatted(
             .number
-                .precision(.fractionLength(2))
+                .precision(.fractionLength(4...8))
                 .locale(locale)
         )
-    }
-
-    private static func rounded(_ value: Decimal, toFractionDigits digits: Int) -> Decimal {
-        var result = Decimal()
-        var copy = value
-        NSDecimalRound(&result, &copy, digits, .plain)
-        return result
     }
 }
 

@@ -27,12 +27,30 @@ Submitted a batch of ambiguity questions before final submission; the recruiter'
 | **Currency symbol** | None — amounts are symbol-less; flag + ISO code gives currency context | Avoids per-locale symbol lookup logic and the ambiguity of showing `$` on non-USD amounts |
 | **Loading state** | Centered `ProgressView` with VoiceOver label "Loading exchange rates" | Live fetch is typically ~200 ms; anything heavier would visually flicker |
 | **Error state** | Red dismissible banner with Retry button; cancellation errors never surfaced | Retry re-enters the `.task(id:)` load path via a bumped `retryToken` (structured concurrency, no detached `Task`) |
-| **Summary precision** | `Decimal.FormatStyle.precision(.fractionLength(2...4))` — shows 2–4 fractional digits | API returns 10 digits; 2–4 is a compromise between readability and rate accuracy |
-| **Input validation** | Max 2 decimal places, clamped during typing; locale-aware separator; strict parse rejects `"1.2.3"` | Matches typical currency UX; 2dp is the standard display precision for user-facing money |
+| **Summary-line precision** | `Decimal.FormatStyle.precision(.fractionLength(2...4))` — rate shown with 2–4 fractional digits | API returns 10; 2–4 is a compromise between readability and accuracy. Rate values are always > 1 in practice so this range is never lossy. |
+| **Amount-field precision** | `Decimal.FormatStyle.precision(.fractionLength(4...8))` — amounts shown with 4–8 fractional digits | See "Round-trip precision edge case" below — 4dp minimum is what avoids the 1 MXN ↔ 0.06 USDc visible drift |
+| **Input validation** | Max 2 decimal places, clamped during typing; locale-aware separator; strict parse rejects `"1.2.3"` | Matches typical currency UX; 2dp is the standard for user-typed values. (Note: this means the *displayed* output of a tiny conversion can have more digits than a user can re-type cleanly — see the round-trip note below.) |
 | **Initial currency** | Hardcoded MXN on first launch; no persistence | No persistence spec; adding UserDefaults would be scope creep |
 | **Keyboard dismiss** | Done button in a keyboard toolbar + tap-outside to dismiss | iOS-standard pattern; Figma's always-visible keypad is atypical for real devices |
 
 These choices are documented alongside the code they inform (Currency.swift, loadRates/loadAvailableCurrencies, ExchangeCalculatorView, clampToTwoDecimalPlaces) and locked in by tests.
+
+### Round-trip precision edge case
+
+Originally the amount formatter used a fixed 2 fractional digits. A user found this:
+
+> Type `1` in MXN. USDc shows `0.06`. Tap USDc field, type `0.06`. MXN comes back as `1.04` — not `1.00`.
+
+**Why:** with MXN ask ≈ 17.36, `1 / 17.36 ≈ 0.05761`. The formatter rounded to `0.06`. When the user typed `0.06` back, the system computed `0.06 × bid(17.34) = 1.0404`, which rounds to `1.04`. The displayed `0.06` represents a *range* of underlying values; re-typing it picks the midpoint, not the original. There's also a small unavoidable drift from the bid/ask spread itself, but the bulk of the visible 4% error is precision loss from 2dp display rounding.
+
+**Fix (chosen, "option A"):** widen the amount formatter's range to `.fractionLength(4...8)`. With that:
+- `1 MXN → "0.0576" USDc` (4 digits — meaningful precision)
+- Round-trip back: `0.0576 × 17.34 ≈ 0.9988 → "0.9988"` — within ~0.2% of the original 1 MXN. The remaining drift is just the spread.
+- Tiny rates (e.g. ARS at ask ≈ 1551 → `0.000645` USDc/peso) still render their significant digits within the 8-digit upper bound.
+
+**Why this approach over the alternative ("option B"):** the alternative was to keep 2dp display but track a precise underlying `Decimal` per field, using the precise value for round-trip math. That works but adds parallel state (the displayed value no longer reflects what the VM actually holds), invariants to maintain (when does the precise value get invalidated by user typing?), and complexity for a marginal UX gain. The "show more digits" approach matches what XE, Google's currency widget, and other exchange calculators do — simpler, cleaner, conventional.
+
+**Known follow-up** (deliberately not addressed): the input clamp still limits user typing to 2 decimal places. So if the user sees `0.0576` USDc and starts typing in that field, their first keystroke would clamp it back to 2dp. Round-trip *display* is now correct; round-trip *editing* of tiny values is still lossy. Lifting the clamp ceiling to match the formatter (e.g. 8dp) would be a small, separate change.
 
 ---
 

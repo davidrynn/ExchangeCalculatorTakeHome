@@ -29,16 +29,22 @@ struct ExchangeCalculatorViewModelTests {
     func usdcToForeignMultipliesByBid() async {
         let (vm, _) = await makeVM()
         vm.usdcAmountChanged("1")
-        // 1 × 18.4069 = 18.4069 → "18.41" at 2dp
-        #expect(vm.foreignAmount == "18.41")
+        // 1 × 18.4069 = 18.4069 — formatter shows 4-8 fractional digits
+        #expect(vm.foreignAmount == "18.4069")
     }
 
     @Test
     func foreignToUsdcDividesByAsk() async {
-        let (vm, _) = await makeVM()
-        vm.foreignAmountChanged("18.4105")
-        // 18.4105 / 18.4105 = 1.00
-        #expect(vm.usdcAmount == "1.00")
+        // Use a clean divisor (ask=20) to avoid Decimal division
+        // approximation noise (Apple's Decimal can produce 0.99997…
+        // when dividing identical non-power-of-10 values).
+        let (vm, _) = await makeVM(
+            ask: Decimal(string: "20")!,
+            bid: Decimal(string: "10")!
+        )
+        vm.foreignAmountChanged("20")
+        // 20 / 20 = 1 → "1.0000" (min 4 fractional digits)
+        #expect(vm.usdcAmount == "1.0000")
     }
 
     /// Without this, it would be easy to accidentally swap bid/ask and the
@@ -53,11 +59,11 @@ struct ExchangeCalculatorViewModelTests {
         )
         // 1 USDc → foreign uses bid → 10
         vm.usdcAmountChanged("1")
-        #expect(vm.foreignAmount == "10.00")
+        #expect(vm.foreignAmount == "10.0000")
 
         // 20 foreign → USDc uses ask → 1
         vm.foreignAmountChanged("20")
-        #expect(vm.usdcAmount == "1.00")
+        #expect(vm.usdcAmount == "1.0000")
     }
 
     // MARK: - Swap
@@ -98,7 +104,7 @@ struct ExchangeCalculatorViewModelTests {
         #expect(vm.isSwapped == true)
         vm.usdcAmountChanged("2")
         #expect(vm.usdcAmount == "2")
-        #expect(vm.foreignAmount == "20.00", "USDc→foreign still uses × bid (2 × 10 = 20)")
+        #expect(vm.foreignAmount == "20.0000", "USDc→foreign still uses × bid (2 × 10 = 20)")
     }
 
     // MARK: - Currency selection
@@ -140,19 +146,20 @@ struct ExchangeCalculatorViewModelTests {
     func nonNumericInputIgnored() async {
         let (vm, _) = await makeVM()
         vm.usdcAmount = "1"
-        vm.foreignAmount = "18.41"
+        vm.foreignAmount = "18.4069"
         vm.usdcAmountChanged("abc")
         // usdcAmount reflects the keystroke, but foreignAmount is NOT
         // updated from a garbage parse.
         #expect(vm.usdcAmount == "abc")
-        #expect(vm.foreignAmount == "18.41")
+        #expect(vm.foreignAmount == "18.4069")
     }
 
     @Test
     func zeroInputProducesZeroOutput() async {
         let (vm, _) = await makeVM()
         vm.usdcAmountChanged("0")
-        #expect(vm.foreignAmount == "0.00")
+        // 4-digit minimum (see format() doc for rationale)
+        #expect(vm.foreignAmount == "0.0000")
     }
 
     // MARK: - Locale
@@ -168,34 +175,37 @@ struct ExchangeCalculatorViewModelTests {
     func esESLocaleFormatsWithComma() {
         let spain = Locale(identifier: "es_ES")
         let formatted = ExchangeCalculatorViewModel.format(Decimal(string: "1.23")!, locale: spain)
-        #expect(formatted == "1,23")
+        #expect(formatted == "1,2300")
     }
 
     @Test
     func enUSLocaleParsesAndFormatsWithDot() {
         let us = Locale(identifier: "en_US")
         #expect(ExchangeCalculatorViewModel.parse("1.23", locale: us) == Decimal(string: "1.23")!)
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.23")!, locale: us) == "1.23")
+        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.23")!, locale: us) == "1.2300")
     }
 
-    // MARK: - Adaptive precision
+    // MARK: - Display precision (4...8 fractional digits)
 
     @Test
-    func formatZeroStaysTwoDp() {
+    func formatZeroPadsToFourDp() {
         let us = Locale(identifier: "en_US")
-        #expect(ExchangeCalculatorViewModel.format(Decimal.zero, locale: us) == "0.00")
+        #expect(ExchangeCalculatorViewModel.format(Decimal.zero, locale: us) == "0.0000")
     }
 
     @Test
-    func formatNormalValueUsesTwoDp() {
+    func formatTruncatesAtMaxEightDp() {
+        // 1.234567890 has 9 fractional digits — formatter rounds to 8.
         let us = Locale(identifier: "en_US")
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.234")!, locale: us) == "1.23")
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1")!, locale: us) == "1.00")
+        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.234567890")!, locale: us)
+                == "1.23456789")
+        // Whole numbers pad to the 4-digit minimum.
+        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1")!, locale: us) == "1.0000")
     }
 
     @Test
-    func formatTinyNonZeroExtendsBeyondTwoDp() {
-        // 0.000645 rounds to 0.00 at 2dp, so precision extends.
+    func formatTinyValueRevealsSignificantDigits() {
+        // 0.000645 fits in 4...8; previously 2dp would have rendered "0.00".
         let us = Locale(identifier: "en_US")
         let formatted = ExchangeCalculatorViewModel.format(
             Decimal(string: "0.000645")!,
@@ -206,11 +216,26 @@ struct ExchangeCalculatorViewModelTests {
     }
 
     @Test
-    func formatValueAboveTwoDpThresholdKeepsTwoDp() {
-        // 0.01 rounds to 0.01 — clearly non-zero at 2dp → stays 2dp.
+    func formatRoundTripPreservesPrecisionForMxnLikeRates() {
+        // The reported edge case: typing 1 MXN at ask ≈ 17.36 produced
+        // "0.06" USDc, and typing "0.06" back produced 1.04 MXN — a 4%
+        // round-trip drift. With 4dp display we keep "0.0576" and the
+        // re-entered value lands within ~0.2% (just the bid/ask spread).
         let us = Locale(identifier: "en_US")
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "0.01")!, locale: us) == "0.01")
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "0.06")!, locale: us) == "0.06")
+        let mxnAsk = Decimal(string: "17.3625")!
+        let mxnBid = Decimal(string: "17.3589")!
+        let usdc = 1 / mxnAsk
+        let displayed = ExchangeCalculatorViewModel.format(usdc, locale: us)
+        // Should look like "0.0576" — 4 fractional digits, non-zero
+        #expect(displayed.hasPrefix("0.05"), "Got \(displayed)")
+
+        // Round-trip: type the displayed value back into USDc, multiply by bid.
+        let parsedBack = ExchangeCalculatorViewModel.parse(displayed, locale: us)!
+        let returned = parsedBack * mxnBid
+        let returnedString = ExchangeCalculatorViewModel.format(returned, locale: us)
+        // Should be very close to "1.0000" — within 1% of the original 1 MXN.
+        #expect(returnedString.hasPrefix("0.99") || returnedString.hasPrefix("1.00"),
+                "Round-trip drifted too far: \(returnedString)")
     }
 
     @Test

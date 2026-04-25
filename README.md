@@ -107,6 +107,10 @@ API book `usdc_xxx` means USDc is base, foreign is quote.
 
 The recruiter confirmed (2026-04-24) that the currency list should reflect "whatever the endpoint returns," with a local fallback standing in until the endpoint ships. The fallback therefore mirrors the spec's example response exactly (`MXN`, `ARS`, `BRL`, `COP`) — the Figma shows EURc but that was treated as aspirational mock content, not a binding requirement. All other judgment-call items (currency symbol, loading/error states, summary precision, initial currency, keyboard dismiss) are documented with rationale in `Docs/ImplementationPlan.md` under *Spec Clarifications — Recruiter Q&A*.
 
+### Display precision (4–8 fractional digits)
+
+Amounts use `Decimal.FormatStyle.precision(.fractionLength(4...8))` rather than fixed 2dp. The reason and the alternative considered are documented in `Docs/ImplementationPlan.md` under *Round-trip precision edge case*. Short version: at 2dp, `1 MXN → "0.06" USDc → "1.04" MXN` round-trip drift looks like a calculator bug; at 4dp, `1 MXN → "0.0576" USDc → "0.9988" MXN` — the residual drift is just the bid/ask spread. Matches how XE and Google's currency widget format.
+
 ## Testing
 
 66 tests total (53 unit + 10 UI + 3 launch):
