@@ -127,3 +127,11 @@ UI tests use launch arguments for deterministic scenarios:
 ## Implementation notes
 
 The full phased implementation plan and per-phase codex code reviews live in `Docs/ImplementationPlan.md`. Every phase was reviewed by a second AI (codex) before merge; findings and fixes are in the git history.
+
+### KNOWN ISSUES
+
+1) When numbers are deleted or 0 "0.0000" or something will show in black instead of greyed-out "0.00". What is the proper handling in this case? Should it be greyed out even though there's a zero number inputted?
+
+### RESOLVED
+
+2) ~~If two numbers are in both fields, tapping back and forth will change the numbers, possibly because behind the hood the numbers are being truncated and changing the values — the user can see a change but the actual stored values should be Decimal to preserve accuracy.~~ — Fixed by refactoring the VM to hold `Decimal` as the source of truth (`usdcDecimal` / `foreignDecimal`) and tracking `lastEditedSide` so rate refreshes re-derive only the non-edited side from the edited side's exact `Decimal`. The input clamp was removed; user-typed strings echo back as-is. See `Docs/ImplementationPlan.md` under *Decimal source-of-truth refactor* for the full story.

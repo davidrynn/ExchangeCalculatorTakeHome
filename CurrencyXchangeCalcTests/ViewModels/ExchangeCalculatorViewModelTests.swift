@@ -250,6 +250,47 @@ struct ExchangeCalculatorViewModelTests {
     }
 
     @Test
+    func rateRefreshDoesNotMutateUserTypedSide() async {
+        // Reported regression: typing 1 in foreign, then having the
+        // rate refresh, would re-process the COMPUTED USDc display
+        // string ("0.0576") through the clamp/parse pipeline,
+        // truncating it to "0.05" and shifting the foreign side back.
+        // After refactor: lastEditedSide is .foreign so the rate
+        // refresh re-derives USDc from foreignDecimal directly. The
+        // foreign side stays exactly as the user typed it.
+        let mock = MockExchangeRateService()
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "17.36")!,
+                bid: Decimal(string: "17.34")!,
+                book: "usdc_mxn",
+                date: ""
+            )
+        ]
+        let mxn = Currency.fallbackList.first { $0.code == "MXN" }!
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: mxn)
+        await vm.loadRates()
+
+        vm.foreignAmountChanged("1")
+        let typedForeign = vm.foreignAmount
+
+        // Simulate a rate refresh (e.g. .task(id:) re-fires).
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "17.50")!,
+                bid: Decimal(string: "17.48")!,
+                book: "usdc_mxn",
+                date: ""
+            )
+        ]
+        await vm.loadRates()
+
+        #expect(vm.foreignAmount == typedForeign,
+                "Rate refresh must NOT mutate the side the user just typed")
+        #expect(vm.foreignDecimal == Decimal(string: "1")!)
+    }
+
+    @Test
     func typingOneARSShowsMeaningfulUSDcValue() async {
         // Regression guard against the reported bug: "when I input a
         // value on the non-US row, nothing happens" — for ARS
@@ -432,10 +473,14 @@ struct ExchangeCalculatorViewModelTests {
     }
 
     @Test
-    func usdcChangedClampsInputInPlace() async {
+    func usdcChangedPreservesUserInputAsTyped() async {
+        // The VM no longer clamps user input — Decimal is the
+        // source of truth, the typed string is echoed back as-is so
+        // SwiftUI's TextField reconciliation can't destroy it.
         let (vm, _) = await makeVM()
         vm.usdcAmountChanged("1.2345")
-        #expect(vm.usdcAmount == "1.23")
+        #expect(vm.usdcAmount == "1.2345")
+        #expect(vm.usdcDecimal == Decimal(string: "1.2345")!)
     }
 
     // MARK: - Currency list fallback

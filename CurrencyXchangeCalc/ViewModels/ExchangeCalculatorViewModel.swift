@@ -21,10 +21,31 @@ final class ExchangeCalculatorViewModel {
     // MARK: - Observed state
 
     /// User-visible USDc amount string (what the USDc `TextField` binds to).
+    /// Holds either what the user typed (raw) or a freshly-formatted
+    /// computed value. Authoritative numeric value lives in
+    /// `usdcDecimal`; never re-clamped or re-parsed from this string.
     var usdcAmount: String = ""
 
-    /// User-visible foreign amount string.
+    /// User-visible foreign amount string. See `usdcAmount` notes —
+    /// numeric truth is in `foreignDecimal`.
     var foreignAmount: String = ""
+
+    /// Authoritative `Decimal` value behind `usdcAmount`. `nil` when the
+    /// field is empty or holds invalid input.
+    private(set) var usdcDecimal: Decimal?
+
+    /// Authoritative `Decimal` value behind `foreignAmount`. `nil` when
+    /// the field is empty or holds invalid input.
+    private(set) var foreignDecimal: Decimal?
+
+    /// Which side the user edited most recently. Used by
+    /// `recalculateAfterRateUpdate()` so a fresh rate re-derives the
+    /// *other* side from the user's authoritative `Decimal`, not from
+    /// a previously-formatted display string. Without this, recomputing
+    /// can lose precision (e.g. 0.0576 → clamp → 0.05) and the user
+    /// sees values shift after rate refreshes.
+    private enum EditedSide: Sendable { case usdc, foreign }
+    private var lastEditedSide: EditedSide?
 
     /// Currently selected foreign currency.
     var selectedCurrency: Currency
@@ -75,42 +96,81 @@ final class ExchangeCalculatorViewModel {
 
     // MARK: - Input handlers
 
-    /// User edited the USDc field. Re-derives `foreignAmount` using the
-    /// current rate's `bid` (USDc→foreign direction). Input is clamped
-    /// to at most 2 decimal places; extra digits are dropped before
-    /// being written back, and SwiftUI reconciles the `TextField` to
-    /// the clamped value.
+    /// User edited the USDc field. Re-derives the foreign side using the
+    /// current rate's `bid` (USDc → foreign direction).
+    ///
+    /// `usdcAmount` echoes the user's raw input as-is — no clamping or
+    /// re-formatting — so SwiftUI's TextField reconciliation never
+    /// destroys what they typed. Numeric truth is parsed into
+    /// `usdcDecimal`; the foreign side is derived from that.
     ///
     /// - Parameter newValue: raw text from the `TextField`.
     func usdcAmountChanged(_ newValue: String) {
-        let clamped = Self.clampToTwoDecimalPlaces(newValue)
-        usdcAmount = clamped
-        guard let rate = currentRate else { return }
-        if clamped.isEmpty {
-            foreignAmount = ""
+        usdcAmount = newValue
+        lastEditedSide = .usdc
+
+        if newValue.isEmpty {
+            usdcDecimal = nil
+            // Only clear the foreign side if it was actually *derived*
+            // from this one (i.e. we have a rate). With no rate, the
+            // two fields are independent — clearing one shouldn't wipe
+            // the other. SwiftUI can fire this setter with an empty
+            // string when a TextField loses focus / re-binds, so we
+            // need this guard to avoid stomping on independent state.
+            if currentRate != nil {
+                foreignDecimal = nil
+                foreignAmount = ""
+            }
             return
         }
-        guard let parsed = Self.parse(clamped) else { return }
-        let converted = parsed * rate.bid
-        foreignAmount = Self.format(converted)
+
+        // Invalid input (e.g. "abc", "1.2.3") — leave the typed text on
+        // screen but don't touch derived state.
+        guard let parsed = Self.parse(newValue) else { return }
+        usdcDecimal = parsed
+        recomputeForeignFromUsdc()
     }
 
-    /// User edited the foreign field. Re-derives `usdcAmount` using the
-    /// current rate's `ask` (foreign→USDc direction). Input is clamped
-    /// to at most 2 decimal places.
+    /// User edited the foreign field. Re-derives the USDc side using the
+    /// current rate's `ask` (foreign → USDc direction).
     ///
     /// - Parameter newValue: raw text from the `TextField`.
     func foreignAmountChanged(_ newValue: String) {
-        let clamped = Self.clampToTwoDecimalPlaces(newValue)
-        foreignAmount = clamped
-        guard let rate = currentRate, rate.ask != 0 else { return }
-        if clamped.isEmpty {
-            usdcAmount = ""
+        foreignAmount = newValue
+        lastEditedSide = .foreign
+
+        if newValue.isEmpty {
+            foreignDecimal = nil
+            // See usdcAmountChanged: only cross-clear when the two
+            // sides are actually linked by a rate.
+            if currentRate != nil {
+                usdcDecimal = nil
+                usdcAmount = ""
+            }
             return
         }
-        guard let parsed = Self.parse(clamped) else { return }
-        let converted = parsed / rate.ask
-        usdcAmount = Self.format(converted)
+
+        guard let parsed = Self.parse(newValue) else { return }
+        foreignDecimal = parsed
+        recomputeUsdcFromForeign()
+    }
+
+    // MARK: - Derived recomputation
+
+    private func recomputeForeignFromUsdc() {
+        guard let usdc = usdcDecimal, let rate = currentRate else { return }
+        let result = usdc * rate.bid
+        foreignDecimal = result
+        foreignAmount = Self.format(result)
+    }
+
+    private func recomputeUsdcFromForeign() {
+        guard let foreign = foreignDecimal,
+              let rate = currentRate,
+              rate.ask != 0 else { return }
+        let result = foreign / rate.ask
+        usdcDecimal = result
+        usdcAmount = Self.format(result)
     }
 
     // MARK: - Commands
@@ -138,6 +198,7 @@ final class ExchangeCalculatorViewModel {
         if let rate = currentRate, rate.currencyCode != currency.code {
             currentRate = nil
             foreignAmount = ""
+            foreignDecimal = nil
         }
     }
 
@@ -229,14 +290,20 @@ final class ExchangeCalculatorViewModel {
 
     // MARK: - Private
 
+    /// After a rate update, re-derive the *non-edited* side from the
+    /// `Decimal` source-of-truth held by the side the user last typed
+    /// in. This avoids re-parsing display strings (which would round
+    /// through the formatter and gradually lose precision on every
+    /// rate refresh).
     private func recalculateAfterRateUpdate() {
-        // After a rate refresh, re-derive the foreign side from the USDc
-        // side if present; otherwise clear both. This keeps the USDc side
-        // sticky across currency changes.
-        if usdcAmount.isEmpty {
-            foreignAmount = ""
-        } else {
-            usdcAmountChanged(usdcAmount)
+        switch lastEditedSide {
+        case .usdc:
+            recomputeForeignFromUsdc()
+        case .foreign:
+            recomputeUsdcFromForeign()
+        case nil:
+            // No user input yet — nothing to derive.
+            return
         }
     }
 

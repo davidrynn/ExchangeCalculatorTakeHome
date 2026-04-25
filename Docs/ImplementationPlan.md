@@ -50,7 +50,28 @@ Originally the amount formatter used a fixed 2 fractional digits. A user found t
 
 **Why this approach over the alternative ("option B"):** the alternative was to keep 2dp display but track a precise underlying `Decimal` per field, using the precise value for round-trip math. That works but adds parallel state (the displayed value no longer reflects what the VM actually holds), invariants to maintain (when does the precise value get invalidated by user typing?), and complexity for a marginal UX gain. The "show more digits" approach matches what XE, Google's currency widget, and other exchange calculators do — simpler, cleaner, conventional.
 
-**Known follow-up** (deliberately not addressed): the input clamp still limits user typing to 2 decimal places. So if the user sees `0.0576` USDc and starts typing in that field, their first keystroke would clamp it back to 2dp. Round-trip *display* is now correct; round-trip *editing* of tiny values is still lossy. Lifting the clamp ceiling to match the formatter (e.g. 8dp) would be a small, separate change.
+### `Decimal` source-of-truth refactor
+
+Follow-up bug user reported after the precision fix:
+
+> If two numbers are in both fields, tapping back and forth will change the numbers, possibly because behind the hood the numbers are being truncated and changing the values — the user can see a change but the actual stored values should be Decimal to preserve accuracy.
+
+User instinct was right. The original VM stored both `usdcAmount` and `foreignAmount` as `String`, with the input handler running a 2dp clamp on the typed value before parsing. Two leak paths:
+
+1. **Rate refresh re-clamping a computed display string.** The old `recalculateAfterRateUpdate()` re-invoked `usdcAmountChanged(usdcAmount)`, which sent a previously-formatted display value (e.g. `"0.0576"`) through the clamp → `"0.05"` → recomputed foreign. The user would see the foreign side jump.
+2. **The clamp itself, applied to user input at all.** Even with no rate refresh, any re-entry into the input handler with a previously-formatted string (e.g. one of the field's own display values being passed back through SwiftUI binding mechanics) would clamp away precision.
+
+**Fix:** make the `Decimal` the authoritative numeric value, not the display string. The VM now holds:
+
+- `usdcDecimal: Decimal?` and `foreignDecimal: Decimal?` — `private(set)`, the source of truth.
+- `usdcAmount: String` and `foreignAmount: String` — what the field shows. For the *user-edited* side it's the raw typed text (no clamp, no re-format). For the *derived* side it's `format(decimal)`.
+- `lastEditedSide: EditedSide?` — `.usdc` or `.foreign`. On rate refresh, only the *non-edited* side is re-derived from the edited side's `Decimal`. The user-edited side never goes through the parser/formatter again.
+
+**Removed:** the 2dp input clamp. Users can now type any precision they want; the underlying `Decimal` records exactly what they typed. The display formatter (4–8dp) still applies to the *derived* side.
+
+**Tests** locking this in:
+- `usdcChangedPreservesUserInputAsTyped` — `"1.2345"` stays `"1.2345"`, no clamp.
+- `rateRefreshDoesNotMutateUserTypedSide` — type `"1"` in foreign, refresh rate, foreign stays `"1"`.
 
 ---
 
