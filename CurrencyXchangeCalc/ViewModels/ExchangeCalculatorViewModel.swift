@@ -324,15 +324,36 @@ final class ExchangeCalculatorViewModel {
         return sawDigit
     }
 
-    /// Formats a `Decimal` to 2 fractional digits using `Decimal.FormatStyle`.
-    /// Value-type formatter, inherently `Sendable` — safe to use from any
-    /// isolation, unlike a shared `NumberFormatter`.
+    /// Formats a `Decimal` using `Decimal.FormatStyle` with adaptive
+    /// precision. Default is 2 fractional digits. If the value is
+    /// non-zero but rounds to zero at 2dp (e.g. `1 ARS / ask(1551) ≈
+    /// 0.000645 USDc` would otherwise render as `"0.00"`), precision
+    /// extends up to 8 fractional digits so the user sees meaningful
+    /// output.
+    ///
+    /// Value-type formatter, inherently `Sendable` — safe to use from
+    /// any isolation, unlike a shared `NumberFormatter`.
     static func format(_ value: Decimal, locale: Locale = .current) -> String {
-        value.formatted(
+        let twoDpRounded = Self.rounded(value, toFractionDigits: 2)
+        if value != 0 && twoDpRounded == 0 {
+            return value.formatted(
+                .number
+                    .precision(.fractionLength(2...8))
+                    .locale(locale)
+            )
+        }
+        return value.formatted(
             .number
                 .precision(.fractionLength(2))
                 .locale(locale)
         )
+    }
+
+    private static func rounded(_ value: Decimal, toFractionDigits digits: Int) -> Decimal {
+        var result = Decimal()
+        var copy = value
+        NSDecimalRound(&result, &copy, digits, .plain)
+        return result
     }
 }
 

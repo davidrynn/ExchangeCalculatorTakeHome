@@ -178,6 +178,80 @@ struct ExchangeCalculatorViewModelTests {
         #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.23")!, locale: us) == "1.23")
     }
 
+    // MARK: - Adaptive precision
+
+    @Test
+    func formatZeroStaysTwoDp() {
+        let us = Locale(identifier: "en_US")
+        #expect(ExchangeCalculatorViewModel.format(Decimal.zero, locale: us) == "0.00")
+    }
+
+    @Test
+    func formatNormalValueUsesTwoDp() {
+        let us = Locale(identifier: "en_US")
+        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.234")!, locale: us) == "1.23")
+        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1")!, locale: us) == "1.00")
+    }
+
+    @Test
+    func formatTinyNonZeroExtendsBeyondTwoDp() {
+        // 0.000645 rounds to 0.00 at 2dp, so precision extends.
+        let us = Locale(identifier: "en_US")
+        let formatted = ExchangeCalculatorViewModel.format(
+            Decimal(string: "0.000645")!,
+            locale: us
+        )
+        #expect(formatted == "0.000645",
+                "Expected full-precision output, got \(formatted)")
+    }
+
+    @Test
+    func formatValueAboveTwoDpThresholdKeepsTwoDp() {
+        // 0.01 rounds to 0.01 — clearly non-zero at 2dp → stays 2dp.
+        let us = Locale(identifier: "en_US")
+        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "0.01")!, locale: us) == "0.01")
+        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "0.06")!, locale: us) == "0.06")
+    }
+
+    @Test
+    func formatNegativeTinyValueAlsoExtends() {
+        let us = Locale(identifier: "en_US")
+        let formatted = ExchangeCalculatorViewModel.format(
+            Decimal(string: "-0.000645")!,
+            locale: us
+        )
+        #expect(formatted == "-0.000645",
+                "Expected extended precision for negative tiny, got \(formatted)")
+    }
+
+    @Test
+    func typingOneARSShowsMeaningfulUSDcValue() async {
+        // Regression guard against the reported bug: "when I input a
+        // value on the non-US row, nothing happens" — for ARS
+        // (ask ≈ 1551), 1 ARS → 1/1551 USDc ≈ 0.000645. With the old
+        // fixed-2dp formatter this rendered as "0.00"; the user
+        // couldn't see that the conversion had fired.
+        let ars = Currency(code: "ARS", flagEmoji: "🇦🇷", displayName: "Argentine Peso")
+        let mock = MockExchangeRateService()
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "1551.0000000000")!,
+                bid: Decimal(string: "1539.4290300000")!,
+                book: "usdc_ars",
+                date: ""
+            )
+        ]
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: ars)
+        await vm.loadRates()
+
+        vm.foreignAmountChanged("1")
+
+        #expect(vm.usdcAmount != "0.00",
+                "Tiny conversions must not collapse to 0.00 — got \(vm.usdcAmount)")
+        #expect(vm.usdcAmount.hasPrefix("0.000"),
+                "Expected leading zeros followed by significant digits, got \(vm.usdcAmount)")
+    }
+
     // MARK: - Large numbers (Decimal, not Double)
 
     @Test
