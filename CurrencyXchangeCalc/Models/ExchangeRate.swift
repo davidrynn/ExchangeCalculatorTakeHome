@@ -30,6 +30,28 @@ nonisolated struct ExchangeRate: Decodable, Equatable, Sendable {
         return String(book.dropFirst(prefix.count)).uppercased()
     }
 
+    /// Parsed publish time, or `nil` when the API sent an empty or
+    /// unparseable timestamp. The API returns timestamps like
+    /// `"2025-10-20T20:14:57.361483956"` — 9 fractional-second digits
+    /// and no timezone offset — which `ISO8601DateFormatter` rejects;
+    /// we strip the sub-second portion and parse as UTC per the
+    /// `README.md` *Assumptions* contract.
+    var publishedAt: Date? {
+        guard !date.isEmpty else { return nil }
+        let truncated = date.split(separator: ".", maxSplits: 1).first.map(String.init) ?? date
+        return Self.timestampFormatter.date(from: truncated)
+    }
+
+    /// Configured once and reused — `DateFormatter` init is expensive,
+    /// and a fixed-format formatter is thread-safe in practice.
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+
     private enum CodingKeys: String, CodingKey {
         case ask, bid, book, date
     }

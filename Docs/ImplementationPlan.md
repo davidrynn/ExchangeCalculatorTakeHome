@@ -8,16 +8,83 @@ Starting point: Xcode scaffold only — `ContentView.swift` and `CurrencyXchange
 
 ---
 
+## Spec Clarifications — Recruiter Q&A (2026-04-24)
+
+Submitted a batch of ambiguity questions before final submission; the recruiter's response shaped the following decisions:
+
+**Currency list (directed):**
+> "The app should show whatever the endpoint returns. For this exercise, that means using a local fallback list until the endpoint is shipped, since that endpoint is intentionally missing as part of the test."
+
+- `Currency.fallbackList` mirrors the spec's example response exactly: `["MXN", "ARS", "BRL", "COP"]`.
+- No EURc, despite the Figma showing it in the picker — the Figma visual was taken as an aspirational mock, not a binding requirement for the fallback content.
+- When `/tickers-currencies` ships, the VM's `loadAvailableCurrencies()` replaces the fallback with whatever the endpoint returns; metadata (flag, displayName) is merged from the fallback when codes overlap.
+
+**Everything else — candidate's judgment:**
+> "For the rest of the points (currency symbols, loading/error states, summary precision, and initial foreign currency behavior) there isn't a prescribed answer. The team is happy for you to use your own judgment there, so long as your choices are sensible and consistent."
+
+| Area | Choice | Rationale |
+|---|---|---|
+| **Currency symbol** | None — amounts are symbol-less; flag + ISO code gives currency context | Avoids per-locale symbol lookup logic and the ambiguity of showing `$` on non-USD amounts |
+| **Loading state** | Centered `ProgressView` with VoiceOver label "Loading exchange rates" | Live fetch is typically ~200 ms; anything heavier would visually flicker |
+| **Error state** | Red dismissible banner with Retry button; cancellation errors never surfaced | Retry re-enters the `.task(id:)` load path via a bumped `retryToken` (structured concurrency, no detached `Task`) |
+| **Summary-line precision** | `Decimal.FormatStyle.precision(.fractionLength(2...4))` — rate shown with 2–4 fractional digits | API returns 10; 2–4 is a compromise between readability and accuracy. Rate values are always > 1 in practice so this range is never lossy. |
+| **Amount-field precision** | `Decimal.FormatStyle.precision(.fractionLength(4...8))` — amounts shown with 4–8 fractional digits | See "Round-trip precision edge case" below — 4dp minimum is what avoids the 1 MXN ↔ 0.06 USDc visible drift |
+| **Input validation** | Max 2 decimal places, clamped during typing; locale-aware separator; strict parse rejects `"1.2.3"` | Matches typical currency UX; 2dp is the standard for user-typed values. (Note: this means the *displayed* output of a tiny conversion can have more digits than a user can re-type cleanly — see the round-trip note below.) |
+| **Initial currency** | Hardcoded MXN on first launch; no persistence | No persistence spec; adding UserDefaults would be scope creep |
+| **Keyboard dismiss** | Done button in a keyboard toolbar + tap-outside to dismiss | iOS-standard pattern; Figma's always-visible keypad is atypical for real devices |
+
+These choices are documented alongside the code they inform (Currency.swift, loadRates/loadAvailableCurrencies, ExchangeCalculatorView, clampToTwoDecimalPlaces) and locked in by tests.
+
+### Round-trip precision edge case
+
+Originally the amount formatter used a fixed 2 fractional digits. A user found this:
+
+> Type `1` in MXN. USDc shows `0.06`. Tap USDc field, type `0.06`. MXN comes back as `1.04` — not `1.00`.
+
+**Why:** with MXN ask ≈ 17.36, `1 / 17.36 ≈ 0.05761`. The formatter rounded to `0.06`. When the user typed `0.06` back, the system computed `0.06 × bid(17.34) = 1.0404`, which rounds to `1.04`. The displayed `0.06` represents a *range* of underlying values; re-typing it picks the midpoint, not the original. There's also a small unavoidable drift from the bid/ask spread itself, but the bulk of the visible 4% error is precision loss from 2dp display rounding.
+
+**Fix (chosen, "option A"):** widen the amount formatter's range to `.fractionLength(4...8)`. With that:
+- `1 MXN → "0.0576" USDc` (4 digits — meaningful precision)
+- Round-trip back: `0.0576 × 17.34 ≈ 0.9988 → "0.9988"` — within ~0.2% of the original 1 MXN. The remaining drift is just the spread.
+- Tiny rates (e.g. ARS at ask ≈ 1551 → `0.000645` USDc/peso) still render their significant digits within the 8-digit upper bound.
+
+**Why this approach over the alternative ("option B"):** the alternative was to keep 2dp display but track a precise underlying `Decimal` per field, using the precise value for round-trip math. That works but adds parallel state (the displayed value no longer reflects what the VM actually holds), invariants to maintain (when does the precise value get invalidated by user typing?), and complexity for a marginal UX gain. The "show more digits" approach matches what XE, Google's currency widget, and other exchange calculators do — simpler, cleaner, conventional.
+
+### `Decimal` source-of-truth refactor
+
+Follow-up bug user reported after the precision fix:
+
+> If two numbers are in both fields, tapping back and forth will change the numbers, possibly because behind the hood the numbers are being truncated and changing the values — the user can see a change but the actual stored values should be Decimal to preserve accuracy.
+
+User instinct was right. The original VM stored both `usdcAmount` and `foreignAmount` as `String`, with the input handler running a 2dp clamp on the typed value before parsing. Two leak paths:
+
+1. **Rate refresh re-clamping a computed display string.** The old `recalculateAfterRateUpdate()` re-invoked `usdcAmountChanged(usdcAmount)`, which sent a previously-formatted display value (e.g. `"0.0576"`) through the clamp → `"0.05"` → recomputed foreign. The user would see the foreign side jump.
+2. **The clamp itself, applied to user input at all.** Even with no rate refresh, any re-entry into the input handler with a previously-formatted string (e.g. one of the field's own display values being passed back through SwiftUI binding mechanics) would clamp away precision.
+
+**Fix:** make the `Decimal` the authoritative numeric value, not the display string. The VM now holds:
+
+- `usdcDecimal: Decimal?` and `foreignDecimal: Decimal?` — `private(set)`, the source of truth.
+- `usdcAmount: String` and `foreignAmount: String` — what the field shows. For the *user-edited* side it's the raw typed text (no clamp, no re-format). For the *derived* side it's `format(decimal)`.
+- `lastEditedSide: EditedSide?` — `.usdc` or `.foreign`. On rate refresh, only the *non-edited* side is re-derived from the edited side's `Decimal`. The user-edited side never goes through the parser/formatter again.
+
+**Removed:** the 2dp input clamp. Users can now type any precision they want; the underlying `Decimal` records exactly what they typed. The display formatter (4–8dp) still applies to the *derived* side.
+
+**Tests** locking this in:
+- `usdcChangedPreservesUserInputAsTyped` — `"1.2345"` stays `"1.2345"`, no clamp.
+- `rateRefreshDoesNotMutateUserTypedSide` — type `"1"` in foreign, refresh rate, foreign stays `"1"`.
+
+---
+
 ## Overall Checklist
 
 - [x] Phase 0 — Architecture design & file scaffold
-- [ ] Phase 1 — Data layer (models + service)
-- [ ] Phase 2 — ViewModel (conversion logic)
-- [ ] Phase 3 — Main calculator UI
-- [ ] Phase 4 — Currency picker bottom sheet
-- [ ] Phase 5 — Live API integration & error/loading states
-- [ ] Phase 6 — Polish, edge cases & accessibility
-- [ ] Phase 7 — Full test suite & public API documentation
+- [x] Phase 1 — Data layer (models + service)
+- [x] Phase 2 — ViewModel (conversion logic)
+- [x] Phase 3 — Main calculator UI
+- [x] Phase 4 — Currency picker bottom sheet
+- [x] Phase 5 — Live API integration & error/loading states
+- [x] Phase 6 — Polish, edge cases & accessibility (some sub-items intentionally walked back — see *Decimal source-of-truth refactor*)
+- [x] Phase 7 — Full test suite & public API documentation
 
 ---
 
@@ -240,25 +307,25 @@ nonisolated final class LiveExchangeRateService: ExchangeRateServiceProtocol {
 - Honors cooperative cancellation — `URLSession.data(...)` is cancellation-aware
 
 ### Checklist
-- [ ] `Currency` model (`nonisolated`, `Sendable`) with `fallbackList` (MXN, ARS, BRL, COP + flag emojis)
-- [ ] `ExchangeRate` Decodable model (`nonisolated`, `Sendable`, not Codable — we never encode); `currencyCode` computed from `book`
-- [ ] **`ExchangeRate` custom `Decodable` / property wrapper** to decode quoted-string numbers in the API response (`"ask": "18.4105000000"`) into `Decimal` via `Decimal(string:)` — never route through `Double`, which loses precision at the 10-digit fraction
-- [ ] `ConversionDirection` enum (`nonisolated`, `Sendable`)
-- [ ] `ExchangeRateServiceProtocol: Sendable` with two `nonisolated async` methods
-- [ ] `LiveExchangeRateService` (`nonisolated final class`) — `fetchRates` implementation
-- [ ] `LiveExchangeRateService` — `fetchCurrencies` implementation (graceful fallback on 404)
-- [ ] `ServiceError` enum (`nonisolated`, `Sendable`) with localized descriptions
-- [ ] All types documented with `///` doc comments
-- [ ] Verify no MainActor warnings when building with strict concurrency
+- [x] `Currency` model (`nonisolated`, `Sendable`) with `fallbackList` (MXN, ARS, BRL, COP + flag emojis)
+- [x] `ExchangeRate` Decodable model (`nonisolated`, `Sendable`, not Codable — we never encode); `currencyCode` computed from `book`
+- [x] **`ExchangeRate` custom `Decodable` / property wrapper** to decode quoted-string numbers in the API response (`"ask": "18.4105000000"`) into `Decimal` via `Decimal(string:)` — never route through `Double`, which loses precision at the 10-digit fraction
+- [x] `ConversionDirection` enum (`nonisolated`, `Sendable`)
+- [x] `ExchangeRateServiceProtocol: Sendable` with two `nonisolated async` methods
+- [x] `LiveExchangeRateService` (`nonisolated final class`) — `fetchRates` implementation
+- [x] `LiveExchangeRateService` — `fetchCurrencies` implementation (graceful fallback on 404)
+- [x] `ServiceError` enum (`nonisolated`, `Sendable`) with localized descriptions
+- [x] All types documented with `///` doc comments
+- [x] Verify no MainActor warnings when building with strict concurrency
 
 ### Unit Tests (`CurrencyXchangeCalcTests`)
-- [ ] `ExchangeRateTests` — decodes valid JSON fixture correctly
-- [ ] `ExchangeRateTests` — quoted-string numbers from the API (e.g. `"ask": "18.4105000000"`) decode to exact `Decimal` (no `Double` round-trip)
-- [ ] `ExchangeRateTests` — `currencyCode` extraction from book string (`"usdc_mxn"` → `"MXN"`, handles uppercase)
-- [ ] `ExchangeRateTests` — malformed JSON throws `DecodingError`, does not crash
-- [ ] `CurrencyTests` — `fallbackList` contains exactly 4 currencies (MXN, ARS, BRL, COP)
-- [ ] `CurrencyTests` — each currency has non-empty flag and displayName
-- [ ] Concurrency smoke test: call `LiveExchangeRateService.fetchRates(...)` from a `nonisolated` test function — compiles and runs without MainActor hop warnings
+- [x] `ExchangeRateTests` — decodes valid JSON fixture correctly
+- [x] `ExchangeRateTests` — quoted-string numbers from the API (e.g. `"ask": "18.4105000000"`) decode to exact `Decimal` (no `Double` round-trip)
+- [x] `ExchangeRateTests` — `currencyCode` extraction from book string (`"usdc_mxn"` → `"MXN"`, handles uppercase)
+- [x] `ExchangeRateTests` — malformed JSON throws `DecodingError`, does not crash
+- [x] `CurrencyTests` — `fallbackList` contains exactly 4 currencies (MXN, ARS, BRL, COP)
+- [x] `CurrencyTests` — each currency has non-empty flag and displayName
+- [x] Concurrency smoke test: call `LiveExchangeRateService.fetchRates(...)` from a `nonisolated` test function — compiles and runs without MainActor hop warnings
 
 ### Testing Command
 ```bash
@@ -329,25 +396,25 @@ final class ExchangeCalculatorViewModel {
 
 ### Checklist
 **Phase 2 uses `MockExchangeRateService` only — no live URLSession work. That lands in Phase 5.**
-- [ ] `@MainActor @Observable` ViewModel with all state properties
-- [ ] `usdcAmountChanged` → updates `foreignAmount` using `rate.bid` (multiply)
-- [ ] `foreignAmountChanged` → updates `usdcAmount` using `rate.ask` (divide)
-- [ ] `swapCurrencies` — toggles `isSwapped` flag; values/currencies stay paired (rows move as atomic units)
-- [ ] `selectCurrency` — updates selected currency, triggers in-memory re-conversion using the current mock rate
-- [ ] Input guard: non-numeric / NaN / Inf ignored; empty string clears the other field
-- [ ] Number formatting helper uses `Decimal.FormatStyle` (value type, inherently `Sendable`) — no shared `NumberFormatter`
-- [ ] All math in `Decimal`; verify no `Double` leakage
+- [x] `@MainActor @Observable` ViewModel with all state properties
+- [x] `usdcAmountChanged` → updates `foreignAmount` using `rate.bid` (multiply)
+- [x] `foreignAmountChanged` → updates `usdcAmount` using `rate.ask` (divide)
+- [x] `swapCurrencies` — toggles `isSwapped` flag; values/currencies stay paired (rows move as atomic units)
+- [x] `selectCurrency` — updates selected currency, triggers in-memory re-conversion using the current mock rate
+- [x] Input guard: non-numeric / NaN / Inf ignored; empty string clears the other field
+- [x] Number formatting helper uses `Decimal.FormatStyle` (value type, inherently `Sendable`) — no shared `NumberFormatter` (now lives in `Extensions/Decimal+Formatting.swift`)
+- [x] All math in `Decimal`; verify no `Double` leakage
 
 ### Unit Tests (`CurrencyXchangeCalcTests`)
 Using `MockExchangeRateService` (pre-seeded with fixture rates). Tests are `@MainActor` so they can read VM state directly.
-- [ ] `usdcAmountChanged("1")` → `foreignAmount` equals `bid` formatted to 2dp (regression guard for bid/ask direction)
-- [ ] `foreignAmountChanged("18.40")` → `usdcAmount` equals `18.40 / ask` formatted (regression guard)
-- [ ] `swapCurrencies` — toggles `isSwapped`; does NOT mutate amounts
-- [ ] `selectCurrency` — `selectedCurrency` updates; re-conversion uses new rate
-- [ ] Empty input → other field clears to `""`
-- [ ] Non-numeric input ignored (no crash, no update)
-- [ ] Locale parse: accepts `,` as decimal separator when `Locale.current` is comma-locale (fixture: `es_ES`)
-- [ ] Large input (e.g. `1_000_000`) does not overflow `Decimal` arithmetic
+- [x] `usdcAmountChanged("1")` → `foreignAmount` equals `bid` formatted (regression guard for bid/ask direction; precision is now 4–8dp per the round-trip refactor below)
+- [x] `foreignAmountChanged("18.40")` → `usdcAmount` equals `18.40 / ask` formatted (regression guard)
+- [x] `swapCurrencies` — toggles `isSwapped`; does NOT mutate amounts
+- [x] `selectCurrency` — `selectedCurrency` updates; re-conversion uses new rate
+- [x] Empty input → other field clears to `""` (only when a `currentRate` exists; without a rate the two fields are independent)
+- [x] Non-numeric input ignored (no crash, no update)
+- [x] Locale parse: accepts `,` as decimal separator when `Locale.current` is comma-locale (fixture: `es_ES`)
+- [x] Large input (e.g. `1_000_000`) does not overflow `Decimal` arithmetic
 
 > Note: live-fetch error paths, cancellation ordering, and fallback-list wiring are tested in Phase 5, where live networking is introduced.
 
@@ -392,25 +459,25 @@ feat: viewmodel — two-way conversion, swap logic, bid/ask math, error handling
 **`ContentView`** — updated to host `ExchangeCalculatorView` and inject ViewModel.
 
 ### Checklist
-- [ ] `ExchangeCalculatorView` layout matches Figma (VStack, spacing 16)
-- [ ] `CurrencyInputRow` — USDc row (non-tappable currency side)
-- [ ] `CurrencyInputRow` — foreign row (currency side tappable, opens sheet)
-- [ ] `SwapButton` styled and functional
-- [ ] Rate summary line below title
-- [ ] Loading state: `ProgressView` overlay while `isLoading`
-- [ ] Error banner when `errorMessage != nil` (dismissible)
-- [ ] `ContentView` updated — injects `ExchangeCalculatorViewModel`
-- [ ] Keyboard `.numberPad` on both fields
-- [ ] Background color `#F8F8F8`
-- [ ] Stable `accessibilityIdentifier` on every testable element — required for UI tests:
+- [x] `ExchangeCalculatorView` layout matches Figma (VStack, spacing 16)
+- [x] `CurrencyInputRow` — USDc row (non-tappable currency side)
+- [x] `CurrencyInputRow` — foreign row (currency side tappable, opens sheet)
+- [x] `SwapButton` styled and functional (later replaced by `CircleIconStyle` applied to a plain `Button`)
+- [x] Rate summary line below title
+- [x] Loading state: `ProgressView` overlay while `isLoading`
+- [x] Error banner when `errorMessage != nil` (dismissible)
+- [x] `ContentView` updated — injects `ExchangeCalculatorViewModel`
+- [x] Keyboard `.numberPad` on both fields (uses `.decimalPad` for locale-correct decimal entry)
+- [x] Background color `#F8F8F8`
+- [x] Stable `accessibilityIdentifier` on every testable element — required for UI tests:
   - `"usdcAmountField"`, `"foreignAmountField"`, `"foreignCurrencyPicker"`, `"swapButton"`, `"rateSummaryLabel"`, `"errorBanner"`
 
 ### UI Tests (`CurrencyXchangeCalcUITests`)
-- [ ] `testCalculatorLoads` — app launches, both input fields visible (query by `accessibilityIdentifier`)
-- [ ] `testUSDCInputUpdatesForeignField` — type "1" in `usdcAmountField`, `foreignAmountField` shows non-zero value
-- [ ] `testForeignInputUpdatesUSDCField` — type amount in `foreignAmountField`, `usdcAmountField` updates
-- [ ] `testSwapButtonExists` — `swapButton` is hittable
-- [ ] `testSwapButtonSwapsRowPositions` — tap swap, foreign row moves above USDc row (frame.minY inverts), amounts stay attached to their currencies
+- [x] `testCalculatorLoads` — app launches, both input fields visible (query by `accessibilityIdentifier`)
+- [x] `testUSDCInputUpdatesForeignField` — type "1" in `usdcAmountField`, `foreignAmountField` shows non-zero value
+- [x] `testForeignInputUpdatesUSDCField` — type amount in `foreignAmountField`, `usdcAmountField` updates
+- [x] `testSwapButtonExists` — `swapButton` is hittable
+- [x] `testSwapButtonSwapsRowPositions` — tap swap, foreign row moves above USDc row (frame.minY inverts), amounts stay attached to their currencies
 
 ### Testing Commands
 ```bash
@@ -444,18 +511,18 @@ feat: main calculator UI — input rows, swap button, rate summary, loading/erro
 - Checkmark if currently selected
 
 ### Checklist
-- [ ] Tapping foreign currency side of `CurrencyInputRow` sets `showCurrencyPicker = true`
-- [ ] `CurrencyPickerSheet` displayed as `.sheet`
-- [ ] Lists all `viewModel.availableCurrencies`
-- [ ] Selecting currency: updates ViewModel, dismisses sheet, triggers rate fetch
-- [ ] Currently-selected currency shows checkmark
-- [ ] `CurrencyPickerRow` shows flag, code, display name
-- [ ] Accessibility identifiers: `"currencyPickerSheet"`, and each row `"currencyPickerRow.<code>"` (e.g. `currencyPickerRow.ARS`)
+- [x] Tapping foreign currency side of `CurrencyInputRow` sets `showCurrencyPicker = true`
+- [x] `CurrencyPickerSheet` displayed as `.sheet`
+- [x] Lists all `viewModel.availableCurrencies`, sorted A→Z by ISO code
+- [x] Selecting currency: updates ViewModel, dismisses sheet, triggers rate fetch
+- [x] Currently-selected currency shows checkmark
+- [x] `CurrencyPickerRow` shows flag + code (display name was originally rendered then removed — see post-Phase changes)
+- [x] Accessibility identifiers: `"currencyPickerSheet"`, and each row `"currencyPickerRow.<code>"` (e.g. `currencyPickerRow.ARS`)
 
 ### UI Tests (`CurrencyXchangeCalcUITests`)
-- [ ] `testCurrencyPickerOpens` — tap `foreignCurrencyPicker`, sheet appears
-- [ ] `testCurrencyPickerDismisses` — swipe down closes sheet
-- [ ] `testCurrencySelection` — tap `currencyPickerRow.ARS`, picker closes, code in field updates to "ARS"
+- [x] `testCurrencyPickerOpens` — tap `foreignCurrencyPicker`, sheet appears
+- [x] `testCurrencyPickerDismisses` — swipe down closes sheet (covered by `testPickerDismissesViaCancel`)
+- [x] `testCurrencySelection` — tap `currencyPickerRow.ARS`, picker closes, code in field updates to "ARS"
 
 ### Testing Command
 ```bash
@@ -485,20 +552,20 @@ feat: currency picker bottom sheet — list, selection, dismiss
 - Loading UI: `ProgressView` during initial fetch.
 
 ### Checklist
-- [ ] `CurrencyXchangeCalcApp` creates `LiveExchangeRateService` and injects into ViewModel
-- [ ] `ExchangeCalculatorView` calls `viewModel.loadRates()` via `.task(id: selectedCurrency.code)`
-- [ ] `fetchCurrencies` 404/unavailable → silently falls back to hardcoded list (no error shown)
-- [ ] Network error on `fetchRates` → `errorMessage` set, banner shown, retry button works
-- [ ] Rates refresh when currency is switched; prior in-flight task is cancelled by `.task(id:)` (stale-response protection)
-- [ ] `loadRates` checks cancellation after each `await` and before mutating state
-- [ ] Quoted-string `Decimal` decoding already in place from Phase 1 — verified end-to-end against live API response
+- [x] `CurrencyXchangeCalcApp` creates `LiveExchangeRateService` and injects into ViewModel
+- [x] `ExchangeCalculatorView` calls `viewModel.loadRates()` via `.task(id: …)` — composite id `"<code>#<retry>"` so Retry / refresh also re-fire through the same boundary
+- [x] `fetchCurrencies` 404/unavailable → silently falls back to hardcoded list (no error shown)
+- [x] Network error on `fetchRates` → `errorMessage` set, banner shown, retry button works
+- [x] Rates refresh when currency is switched; prior in-flight task is cancelled by `.task(id:)` (stale-response protection)
+- [x] `loadRates` checks cancellation after each `await` and before mutating state
+- [x] Quoted-string `Decimal` decoding already in place from Phase 1 — verified end-to-end against live API response
 
 ### Unit Tests
-- [ ] `MockExchangeRateService` with configurable failure mode
-- [ ] `loadRates` with service throwing → `errorMessage != nil`, `isLoading == false`
-- [ ] `loadRates` success → `isLoading == false`, rates available
-- [ ] Deterministic cancellation: issue two `loadRates` back-to-back; only the later one commits state
-- [ ] `fetchCurrencies` throwing `.unavailable` → `availableCurrencies` equals `Currency.fallbackList` and `errorMessage` is `nil`
+- [x] `MockExchangeRateService` with configurable failure mode
+- [x] `loadRates` with service throwing → `errorMessage != nil`, `isLoading == false`
+- [x] `loadRates` success → `isLoading == false`, rates available
+- [x] Deterministic cancellation: issue two `loadRates` back-to-back; only the later one commits state (`overlappingLoadRatesDoesNotCommitOlderResult`)
+- [x] `fetchCurrencies` throwing `.unavailable` → `availableCurrencies` equals `Currency.fallbackList` and `errorMessage` is `nil`
 
 ### Testing Command
 ```bash
@@ -520,25 +587,25 @@ feat: live API integration — URLSession, fallback currencies, error/retry UI
 **Branch:** `feat/phase-6-polish`
 
 ### Spec & Checklist
-- [ ] Input guard: max 2 decimal places enforced in `TextField` (parse → `Decimal`, reject extras)
-- [ ] Input guard: no leading zeros (e.g. "007" → "7")
-- [ ] Input guard: empty field clears the other field to `""`
-- [ ] Decimal separator localized (`.` vs `,`) using `Decimal.FormatStyle` / `Decimal.ParseStrategy` with `Locale.current` — no shared `NumberFormatter` (not `Sendable`, race-prone)
-- [ ] Numeric keyboard dismiss on tap outside (`.toolbar { ToolbarItemGroup(placement: .keyboard) }`)
-- [ ] Zero input ("0") → other field shows "0.00"
-- [ ] Very large numbers don't overflow layout (truncation or compact formatting)
-- [ ] Accessibility: all interactive elements have `accessibilityLabel`
-- [ ] `CurrencyInputRow` USDc side has `accessibilityLabel("USDc amount")`
-- [ ] `SwapButton` has `accessibilityLabel("Swap currencies")`
-- [ ] Figma colors confirmed: background `#F8F8F8`, card `#FFFFFF`, green `#22D081`, text `#2C2C2E`
+- [ ] ~~Input guard: max 2 decimal places enforced in `TextField`~~ — **deliberately removed** in the *Decimal source-of-truth refactor* (above) so user-typed precision survives unchanged. Display formatting now uses 4–8dp; underlying `Decimal` is exact.
+- [ ] Input guard: no leading zeros (e.g. "007" → "7") — not implemented; input is accepted as-typed and parses cleanly via `Decimal(string:)`
+- [x] Input guard: empty field clears the other field to `""` (gated on having a `currentRate` — see *Edge cases* in README)
+- [x] Decimal separator localized (`.` vs `,`) using `Decimal.FormatStyle` / `Decimal.ParseStrategy` with `Locale.current` — no shared `NumberFormatter` (not `Sendable`, race-prone)
+- [x] Numeric keyboard dismiss on tap outside (`.toolbar { ToolbarItemGroup(placement: .keyboard) }`) + Done toolbar button
+- [ ] Zero input ("0") → other field shows "0.00" — currently shows `"0.0000"` because of the 4–8dp display change. Visual treatment is an open question (see README *KNOWN ISSUES*).
+- [ ] Very large numbers don't overflow layout — current layout grows the field leftward via `fixedSize`; explicit overflow handling (truncation / scaling) is not in place.
+- [x] Accessibility: all interactive elements have `accessibilityLabel`
+- [x] `CurrencyInputRow` USDc side has `accessibilityLabel("USDc amount")`
+- [x] `SwapButton` has `accessibilityLabel("Swap currencies")`
+- [x] Figma colors confirmed: background `#F8F8F8`, card `#FFFFFF`, green `#22D081`, text `#2C2C2E`
 
 ### Unit Tests
-- [ ] `formatAmount(Decimal(string: "0.12345")!)` → `"0.12"`
-- [ ] `formatAmount(Decimal.zero)` → `"0.00"`
-- [ ] Parse `"007"` → `Decimal(7)`
-- [ ] Parse `"1.2.3"` rejected (returns `nil`)
-- [ ] `es_ES` locale: parse `"1,23"` → `Decimal(string: "1.23")`; format `Decimal(string: "1.23")` → `"1,23"`
-- [ ] `en_US` locale: parse `"1.23"` → `Decimal(string: "1.23")`; format → `"1.23"`
+- [x] `formatAmount` boundary tests (precision moved to 4–8dp; equivalent tests: `formatZeroPadsToFourDp`, `formatTruncatesAtMaxEightDp`)
+- [x] `formatAmount(Decimal.zero)` → `"0.0000"` (was `"0.00"` before the precision change)
+- [x] Parse `"007"` → `Decimal(7)` (`parseLeadingZerosAcceptedAsDecimalValue`)
+- [x] Parse `"1.2.3"` rejected (returns `nil`) (`parseRejectsMultipleDecimalPoints`)
+- [x] `es_ES` locale: parse `"1,23"` → `Decimal(string: "1.23")`; format → `"1,23"`
+- [x] `en_US` locale: parse `"1.23"` → `Decimal(string: "1.23")`; format → `"1.23"`
 
 ### Commit
 ```
@@ -557,30 +624,32 @@ polish: input validation, number formatting, accessibility labels, UX edge cases
 ### Spec & Checklist
 
 **Unit tests — complete coverage targets:**
-- [ ] `ExchangeRate` — decoding, `currencyCode` extraction, edge cases
-- [ ] `Currency` — fallback list integrity
-- [ ] `ExchangeCalculatorViewModel` — every externally-callable method covered
-- [ ] Number formatting utility — boundary cases
+- [x] `ExchangeRate` — decoding, `currencyCode` extraction, edge cases (plus `publishedAt` parsing variants)
+- [x] `Currency` — fallback list integrity (plus `symbol` rendering, narrow form, USD-stablecoin fallback)
+- [x] `ExchangeCalculatorViewModel` — every externally-callable method covered
+- [x] Number formatting utility — boundary cases (zero, tiny, negative, max precision, locale)
 
 **UI tests — golden path:**
-- [ ] App launch → fields visible, rate shown
-- [ ] Type in USDc → foreign updates
-- [ ] Type in foreign → USDc updates
-- [ ] Tap swap → row positions flip; amounts stay attached to their currencies
-- [ ] Tap currency → picker opens → select currency → picker closes → code updated
-- [ ] Network error scenario (mock offline) → error banner appears
+- [x] App launch → fields visible, rate shown
+- [x] Type in USDc → foreign updates
+- [x] Type in foreign → USDc updates
+- [x] Tap swap → row positions flip; amounts stay attached to their currencies
+- [x] Tap currency → picker opens → select currency → picker closes → code updated
+- [x] Network error scenario (mock offline) → error banner appears
+- [x] Rate-freshness label renders when timestamp present; refresh button actually re-runs the load (proven via `-UITEST_INCREMENT_RATE`)
+- [x] Picker rows render alphabetically by ISO code
 
 **Documentation:**
-- [ ] Every type, method, and non-trivial property in the app target (all `internal` — single-target app has no `public` surface) has a `///` doc comment covering Summary, Parameters, Returns, Throws where applicable
-- [ ] `README.md` updated: project overview, how to build & run, architecture summary
-- [ ] CLAUDE.md Architecture section updated to reflect actual file structure
+- [x] Every type, method, and non-trivial property in the app target (all `internal` — single-target app has no `public` surface) has a `///` doc comment covering Summary, Parameters, Returns, Throws where applicable
+- [x] `README.md` updated: project overview, how to build & run, architecture summary, edge cases, beyond-spec improvements, and the AI + manual workflow notes
+- [x] CLAUDE.md Architecture section updated to reflect actual file structure
 
 **Final pre-submission checks:**
-- [ ] `xcodebuild ... test` passes with zero failures
-- [ ] Clean build from scratch passes
-- [ ] App runs on iPhone 17 simulator without modification (iPhone 16 is not available on the dev machine; iPhone 17 is the closest supported sim for iOS 26.4)
-- [ ] No hardcoded simulator UDIDs or developer team IDs in project
-- [ ] Git history is clean; no secrets in commits
+- [x] `xcodebuild ... test` passes with zero failures
+- [x] Clean build from scratch passes
+- [x] App runs on iPhone 17 simulator without modification (iPhone 16 is not available on the dev machine; iPhone 17 is the closest supported sim for iOS 26.4)
+- [x] No hardcoded simulator UDIDs or developer team IDs in project
+- [x] Git history is clean; no secrets in commits
 
 ### Commit
 ```

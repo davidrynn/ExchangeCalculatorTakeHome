@@ -41,12 +41,18 @@ struct ExchangeCalculatorView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { Self.dismissKeyboard() }
 
-            VStack(alignment: .leading, spacing: 24) {
-                header
-                amountStack
-                Spacer()
+            // ScrollView so the content can grow vertically at large
+            // Dynamic Type sizes without pushing the rate summary or
+            // input rows off-screen.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    amountStack
+                }
+                .padding(.top, 24)
             }
-            .padding(.top, 24)
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.interactively)
 
             if let message = viewModel.errorMessage {
                 errorBanner(message: message)
@@ -94,8 +100,8 @@ struct ExchangeCalculatorView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Exchange")
-                .font(.system(size: 30, weight: .bold))
+            Text("Exchange calculator")
+                .font(.largeTitle.bold())
                 .foregroundStyle(Color(hex: 0x2C2C2E))
                 .accessibilityIdentifier("exchangeTitle")
 
@@ -107,10 +113,40 @@ struct ExchangeCalculatorView: View {
     @ViewBuilder
     private var rateSummary: some View {
         if let rate = viewModel.currentRate {
-            Text("1 USDc = \(formattedRate(rate.bid)) \(viewModel.selectedCurrency.code)")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Color(hex: 0x22D081))
-                .accessibilityIdentifier("rateSummaryLabel")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("1 USDc = \(rate.bid.formattedAsRate()) \(viewModel.selectedCurrency.code)")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color(hex: 0x22D081))
+                    .accessibilityIdentifier("rateSummaryLabel")
+                if let published = rate.publishedAt {
+                    HStack(spacing: 8) {
+                        Text("Updated \(published.formatted(.relative(presentation: .named)))")
+                            .font(.caption)
+                            .foregroundStyle(Color(hex: 0x8E8E93))
+                            .accessibilityIdentifier("rateFreshnessLabel")
+                        Button {
+                            retryToken &+= 1
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption.weight(.semibold))
+                                .symbolEffect(
+                                    .rotate,
+                                    options: .repeat(.continuous),
+                                    isActive: viewModel.isLoading
+                                )
+                                // 44pt frame for the HIG-minimum tap target;
+                                // the glyph stays caption-sized.
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color(hex: 0x22D081))
+                        .disabled(viewModel.isLoading)
+                        .accessibilityIdentifier("rateRefreshButton")
+                        .accessibilityLabel("Refresh exchange rate")
+                    }
+                }
+            }
         } else {
             Text(" ")
                 .accessibilityIdentifier("rateSummaryLabel")
@@ -128,7 +164,14 @@ struct ExchangeCalculatorView: View {
                     foreignRow
                 }
             }
-            SwapButton(action: { viewModel.swapCurrencies() })
+            Button {
+                viewModel.swapCurrencies()
+            } label: {
+                Image(systemName: "arrow.down")
+            }
+            .buttonStyle(CircleIconStyle())
+            .accessibilityIdentifier("swapButton")
+            .accessibilityLabel("Swap currencies")
         }
     }
 
@@ -154,9 +197,7 @@ struct ExchangeCalculatorView: View {
             ),
             amountFieldIdentifier: "foreignAmountField",
             currencyLabelIdentifier: "foreignCurrencyPicker",
-            onTapCurrency: {
-                isCurrencyPickerPresented = true
-            }
+            isCurrencyPickerPresented: $isCurrencyPickerPresented
         )
     }
 
@@ -196,16 +237,14 @@ struct ExchangeCalculatorView: View {
             .padding(12)
             .background(Color.red.opacity(0.9), in: RoundedRectangle(cornerRadius: 12))
             .padding(.horizontal, 16)
+            // `children: .contain` so the Retry / Dismiss buttons keep
+            // their own accessibilityIdentifiers (the container's id
+            // would otherwise cascade and override them).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("errorBanner")
             Spacer()
         }
         .padding(.top, 96)
-    }
-
-    // MARK: - Formatting
-
-    private func formattedRate(_ rate: Decimal) -> String {
-        rate.formatted(.number.precision(.fractionLength(2...4)))
     }
 
     // MARK: - Keyboard

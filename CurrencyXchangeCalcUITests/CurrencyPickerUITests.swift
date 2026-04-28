@@ -39,6 +39,29 @@ final class CurrencyPickerUITests: XCTestCase {
     }
 
     @MainActor
+    func testPickerListIsSortedAlphabeticallyByCode() {
+        // The fallback list is declared in source as MXN, ARS, BRL, COP.
+        // The picker should display them sorted A→Z by ISO code.
+        let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_DISABLE_NETWORK"]
+        app.launch()
+
+        app.buttons["foreignCurrencyPicker"].tap()
+
+        let expectedOrder = ["ARS", "BRL", "COP", "MXN"]
+        var lastY: CGFloat = -1
+        for code in expectedOrder {
+            let row = app.buttons["currencyPickerRow.\(code)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 3),
+                          "Row for \(code) should exist in the picker")
+            let y = row.frame.minY
+            XCTAssertGreaterThan(y, lastY,
+                                 "Row \(code) should be below the previous row (Y=\(y) vs lastY=\(lastY))")
+            lastY = y
+        }
+    }
+
+    @MainActor
     func testSelectingCurrencyUpdatesFieldAndDismissesPicker() {
         let app = XCUIApplication()
         app.launchArguments += ["-UITEST_DISABLE_NETWORK"]

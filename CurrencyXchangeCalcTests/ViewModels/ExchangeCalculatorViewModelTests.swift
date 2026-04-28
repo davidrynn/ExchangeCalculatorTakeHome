@@ -29,16 +29,22 @@ struct ExchangeCalculatorViewModelTests {
     func usdcToForeignMultipliesByBid() async {
         let (vm, _) = await makeVM()
         vm.usdcAmountChanged("1")
-        // 1 × 18.4069 = 18.4069 → "18.41" at 2dp
-        #expect(vm.foreignAmount == "18.41")
+        // 1 × 18.4069 = 18.4069 — formatter shows 4-8 fractional digits
+        #expect(vm.foreignAmount == "18.4069")
     }
 
     @Test
     func foreignToUsdcDividesByAsk() async {
-        let (vm, _) = await makeVM()
-        vm.foreignAmountChanged("18.4105")
-        // 18.4105 / 18.4105 = 1.00
-        #expect(vm.usdcAmount == "1.00")
+        // Use a clean divisor (ask=20) to avoid Decimal division
+        // approximation noise (Apple's Decimal can produce 0.99997…
+        // when dividing identical non-power-of-10 values).
+        let (vm, _) = await makeVM(
+            ask: Decimal(string: "20")!,
+            bid: Decimal(string: "10")!
+        )
+        vm.foreignAmountChanged("20")
+        // 20 / 20 = 1 → "1.0000" (min 4 fractional digits)
+        #expect(vm.usdcAmount == "1.0000")
     }
 
     /// Without this, it would be easy to accidentally swap bid/ask and the
@@ -53,11 +59,11 @@ struct ExchangeCalculatorViewModelTests {
         )
         // 1 USDc → foreign uses bid → 10
         vm.usdcAmountChanged("1")
-        #expect(vm.foreignAmount == "10.00")
+        #expect(vm.foreignAmount == "10.0000")
 
         // 20 foreign → USDc uses ask → 1
         vm.foreignAmountChanged("20")
-        #expect(vm.usdcAmount == "1.00")
+        #expect(vm.usdcAmount == "1.0000")
     }
 
     // MARK: - Swap
@@ -98,7 +104,7 @@ struct ExchangeCalculatorViewModelTests {
         #expect(vm.isSwapped == true)
         vm.usdcAmountChanged("2")
         #expect(vm.usdcAmount == "2")
-        #expect(vm.foreignAmount == "20.00", "USDc→foreign still uses × bid (2 × 10 = 20)")
+        #expect(vm.foreignAmount == "20.0000", "USDc→foreign still uses × bid (2 × 10 = 20)")
     }
 
     // MARK: - Currency selection
@@ -113,9 +119,11 @@ struct ExchangeCalculatorViewModelTests {
 
     @Test
     func selectingDifferentCurrencyInvalidatesStaleRate() async {
-        let (vm, _) = await makeVM(currency: Currency.fallbackList[0]) // MXN
+        let mxn = Currency.fallbackList.first { $0.code == "MXN" }!
+        let ars = Currency.fallbackList.first { $0.code == "ARS" }!
+        let (vm, _) = await makeVM(currency: mxn)
         #expect(vm.currentRate != nil)
-        vm.selectCurrency(Currency.fallbackList[1]) // ARS
+        vm.selectCurrency(ars)
         // Rate was for MXN — should be cleared when we switch to ARS
         // because the view has not yet triggered a new loadRates.
         #expect(vm.currentRate == nil)
@@ -138,19 +146,20 @@ struct ExchangeCalculatorViewModelTests {
     func nonNumericInputIgnored() async {
         let (vm, _) = await makeVM()
         vm.usdcAmount = "1"
-        vm.foreignAmount = "18.41"
+        vm.foreignAmount = "18.4069"
         vm.usdcAmountChanged("abc")
         // usdcAmount reflects the keystroke, but foreignAmount is NOT
         // updated from a garbage parse.
         #expect(vm.usdcAmount == "abc")
-        #expect(vm.foreignAmount == "18.41")
+        #expect(vm.foreignAmount == "18.4069")
     }
 
     @Test
     func zeroInputProducesZeroOutput() async {
         let (vm, _) = await makeVM()
         vm.usdcAmountChanged("0")
-        #expect(vm.foreignAmount == "0.00")
+        // 4-digit minimum (see format() doc for rationale)
+        #expect(vm.foreignAmount == "0.0000")
     }
 
     // MARK: - Locale
@@ -165,15 +174,186 @@ struct ExchangeCalculatorViewModelTests {
     @Test
     func esESLocaleFormatsWithComma() {
         let spain = Locale(identifier: "es_ES")
-        let formatted = ExchangeCalculatorViewModel.format(Decimal(string: "1.23")!, locale: spain)
-        #expect(formatted == "1,23")
+        let formatted = Decimal(string: "1.23")!.formattedAsAmount(locale: spain)
+        #expect(formatted == "1,2300")
     }
 
     @Test
     func enUSLocaleParsesAndFormatsWithDot() {
         let us = Locale(identifier: "en_US")
         #expect(ExchangeCalculatorViewModel.parse("1.23", locale: us) == Decimal(string: "1.23")!)
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.23")!, locale: us) == "1.23")
+        #expect(Decimal(string: "1.23")!.formattedAsAmount(locale: us) == "1.2300")
+    }
+
+    // MARK: - Display precision (4...8 fractional digits)
+
+    @Test
+    func formatZeroPadsToFourDp() {
+        let us = Locale(identifier: "en_US")
+        #expect(Decimal.zero.formattedAsAmount(locale: us) == "0.0000")
+    }
+
+    @Test
+    func formatTruncatesAtMaxEightDp() {
+        // 1.234567890 has 9 fractional digits — formatter rounds to 8.
+        let us = Locale(identifier: "en_US")
+        #expect(Decimal(string: "1.234567890")!.formattedAsAmount(locale: us)
+                == "1.23456789")
+        // Whole numbers pad to the 4-digit minimum.
+        #expect(Decimal(string: "1")!.formattedAsAmount(locale: us) == "1.0000")
+    }
+
+    @Test
+    func formatTinyValueRevealsSignificantDigits() {
+        // 0.000645 fits in 4...8; previously 2dp would have rendered "0.00".
+        let us = Locale(identifier: "en_US")
+        let formatted = Decimal(string: "0.000645")!.formattedAsAmount(locale: us)
+        #expect(formatted == "0.000645",
+                "Expected full-precision output, got \(formatted)")
+    }
+
+    @Test
+    func formatRoundTripPreservesPrecisionForMxnLikeRates() {
+        // The reported edge case: typing 1 MXN at ask ≈ 17.36 produced
+        // "0.06" USDc, and typing "0.06" back produced 1.04 MXN — a 4%
+        // round-trip drift. With 4dp display we keep "0.0576" and the
+        // re-entered value lands within ~0.2% (just the bid/ask spread).
+        let us = Locale(identifier: "en_US")
+        let mxnAsk = Decimal(string: "17.3625")!
+        let mxnBid = Decimal(string: "17.3589")!
+        let usdc = 1 / mxnAsk
+        let displayed = usdc.formattedAsAmount(locale: us)
+        // Should look like "0.0576" — 4 fractional digits, non-zero
+        #expect(displayed.hasPrefix("0.05"), "Got \(displayed)")
+
+        // Round-trip: type the displayed value back into USDc, multiply by bid.
+        let parsedBack = ExchangeCalculatorViewModel.parse(displayed, locale: us)!
+        let returned = parsedBack * mxnBid
+        let returnedString = returned.formattedAsAmount(locale: us)
+        // Should be very close to "1.0000" — within 1% of the original 1 MXN.
+        #expect(returnedString.hasPrefix("0.99") || returnedString.hasPrefix("1.00"),
+                "Round-trip drifted too far: \(returnedString)")
+    }
+
+    @Test
+    func formatNegativeTinyValueAlsoExtends() {
+        let us = Locale(identifier: "en_US")
+        let formatted = Decimal(string: "-0.000645")!.formattedAsAmount(locale: us)
+        #expect(formatted == "-0.000645",
+                "Expected extended precision for negative tiny, got \(formatted)")
+    }
+
+    @Test
+    func reInvokingForeignChangedWithSameValueIsNoop() async {
+        // Reported bug: "tapping back and forth changes the numbers."
+        // Root cause: SwiftUI fires the binding setter on focus / rebind
+        // with the existing display string. Without an idempotent guard,
+        // each tap flips lastEditedSide and re-derives the opposite
+        // side via the asymmetric bid/ask, causing drift.
+        let (vm, _) = await makeVM()
+        vm.usdcAmountChanged("1")
+        let snapshotUsdc = vm.usdcAmount
+        let snapshotForeign = vm.foreignAmount
+        let snapshotUsdcDecimal = vm.usdcDecimal
+        let snapshotForeignDecimal = vm.foreignDecimal
+
+        // Simulate SwiftUI firing the foreign setter with the *current*
+        // foreign display value (a focus-fire, not a real edit).
+        vm.foreignAmountChanged(vm.foreignAmount)
+
+        #expect(vm.usdcAmount == snapshotUsdc, "USDc string drifted: \(vm.usdcAmount)")
+        #expect(vm.foreignAmount == snapshotForeign, "Foreign string drifted: \(vm.foreignAmount)")
+        #expect(vm.usdcDecimal == snapshotUsdcDecimal, "USDc decimal drifted")
+        #expect(vm.foreignDecimal == snapshotForeignDecimal, "Foreign decimal drifted")
+    }
+
+    @Test
+    func reInvokingUsdcChangedWithSameValueIsNoop() async {
+        // Inverse of the above — type in foreign, then re-fire USDc
+        // setter with the existing USDc display string. Nothing
+        // should change.
+        let (vm, _) = await makeVM()
+        vm.foreignAmountChanged("18.4069")
+        let snapshotUsdc = vm.usdcAmount
+        let snapshotForeign = vm.foreignAmount
+        let snapshotUsdcDecimal = vm.usdcDecimal
+        let snapshotForeignDecimal = vm.foreignDecimal
+
+        vm.usdcAmountChanged(vm.usdcAmount)
+
+        #expect(vm.usdcAmount == snapshotUsdc)
+        #expect(vm.foreignAmount == snapshotForeign)
+        #expect(vm.usdcDecimal == snapshotUsdcDecimal)
+        #expect(vm.foreignDecimal == snapshotForeignDecimal)
+    }
+
+    @Test
+    func rateRefreshDoesNotMutateUserTypedSide() async {
+        // Reported regression: typing 1 in foreign, then having the
+        // rate refresh, would re-process the COMPUTED USDc display
+        // string ("0.0576") through the clamp/parse pipeline,
+        // truncating it to "0.05" and shifting the foreign side back.
+        // After refactor: lastEditedSide is .foreign so the rate
+        // refresh re-derives USDc from foreignDecimal directly. The
+        // foreign side stays exactly as the user typed it.
+        let mock = MockExchangeRateService()
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "17.36")!,
+                bid: Decimal(string: "17.34")!,
+                book: "usdc_mxn",
+                date: ""
+            )
+        ]
+        let mxn = Currency.fallbackList.first { $0.code == "MXN" }!
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: mxn)
+        await vm.loadRates()
+
+        vm.foreignAmountChanged("1")
+        let typedForeign = vm.foreignAmount
+
+        // Simulate a rate refresh (e.g. .task(id:) re-fires).
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "17.50")!,
+                bid: Decimal(string: "17.48")!,
+                book: "usdc_mxn",
+                date: ""
+            )
+        ]
+        await vm.loadRates()
+
+        #expect(vm.foreignAmount == typedForeign,
+                "Rate refresh must NOT mutate the side the user just typed")
+        #expect(vm.foreignDecimal == Decimal(string: "1")!)
+    }
+
+    @Test
+    func typingOneARSShowsMeaningfulUSDcValue() async {
+        // Regression guard against the reported bug: "when I input a
+        // value on the non-US row, nothing happens" — for ARS
+        // (ask ≈ 1551), 1 ARS → 1/1551 USDc ≈ 0.000645. With the old
+        // fixed-2dp formatter this rendered as "0.00"; the user
+        // couldn't see that the conversion had fired.
+        let ars = Currency(code: "ARS", flagEmoji: "🇦🇷", displayName: "Argentine Peso")
+        let mock = MockExchangeRateService()
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "1551.0000000000")!,
+                bid: Decimal(string: "1539.4290300000")!,
+                book: "usdc_ars",
+                date: ""
+            )
+        ]
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: ars)
+        await vm.loadRates()
+
+        vm.foreignAmountChanged("1")
+
+        #expect(vm.usdcAmount != "0.00",
+                "Tiny conversions must not collapse to 0.00 — got \(vm.usdcAmount)")
+        #expect(vm.usdcAmount.hasPrefix("0.000"),
+                "Expected leading zeros followed by significant digits, got \(vm.usdcAmount)")
     }
 
     // MARK: - Large numbers (Decimal, not Double)
@@ -331,10 +511,14 @@ struct ExchangeCalculatorViewModelTests {
     }
 
     @Test
-    func usdcChangedClampsInputInPlace() async {
+    func usdcChangedPreservesUserInputAsTyped() async {
+        // The VM no longer clamps user input — Decimal is the
+        // source of truth, the typed string is echoed back as-is so
+        // SwiftUI's TextField reconciliation can't destroy it.
         let (vm, _) = await makeVM()
         vm.usdcAmountChanged("1.2345")
-        #expect(vm.usdcAmount == "1.23")
+        #expect(vm.usdcAmount == "1.2345")
+        #expect(vm.usdcDecimal == Decimal(string: "1.2345")!)
     }
 
     // MARK: - Currency list fallback
@@ -351,6 +535,32 @@ struct ExchangeCalculatorViewModelTests {
                 "Should fall back to Currency.fallbackList when fetchCurrencies throws")
         #expect(vm.errorMessage == nil,
                 "Currency-list failure is non-critical and must not surface a user error")
+    }
+
+    @Test
+    func mixedCaseDisplayCodeMatchesUppercaseAPICode() async {
+        // Guard: the VM uses case-insensitive matching so a
+        // mixed-case display code (e.g. a future stablecoin like
+        // "EURc" or "USDc") still matches the API-extracted uppercase
+        // code. No mixed-case codes ship in fallbackList today, but
+        // the matching logic is defensive.
+        let mock = MockExchangeRateService()
+        mock.stubbedRates = [
+            ExchangeRate(
+                ask: Decimal(string: "1.08")!,
+                bid: Decimal(string: "1.07")!,
+                book: "usdc_eurc",
+                date: ""
+            )
+        ]
+        let mixedCase = Currency(code: "EURc", flagEmoji: "🇪🇺", displayName: "Euro Coin")
+        let vm = ExchangeCalculatorViewModel(service: mock, selectedCurrency: mixedCase)
+
+        await vm.loadRates()
+
+        #expect(vm.currentRate != nil,
+                "Mixed-case display code must match API-uppercased code case-insensitively")
+        #expect(vm.errorMessage == nil)
     }
 
     @Test

@@ -14,14 +14,13 @@ struct CurrencyInputRow: View {
     let currency: Currency
     let isTappable: Bool
     @Binding var amount: String
-
-    /// Optional stable identifier for the amount `TextField`. Used by UI tests.
+    /// Write-only outbound signal — setting `true` asks the parent to
+    /// present the picker. `nil` for non-tappable rows (USDc) since they
+    /// never present a picker; an optional `Binding` stays honest about
+    /// that absence rather than carrying a `.constant(false)` stub.
+    let isCurrencyPickerPresented: Binding<Bool>?
     let amountFieldIdentifier: String
-
-    /// Optional stable identifier for the currency label (foreign row).
     let currencyLabelIdentifier: String?
-
-    let onTapCurrency: (() -> Void)?
 
     init(
         currency: Currency,
@@ -29,59 +28,85 @@ struct CurrencyInputRow: View {
         amount: Binding<String>,
         amountFieldIdentifier: String,
         currencyLabelIdentifier: String? = nil,
-        onTapCurrency: (() -> Void)? = nil
+        isCurrencyPickerPresented: Binding<Bool>? = nil
     ) {
         self.currency = currency
         self.isTappable = isTappable
         self._amount = amount
         self.amountFieldIdentifier = amountFieldIdentifier
         self.currencyLabelIdentifier = currencyLabelIdentifier
-        self.onTapCurrency = onTapCurrency
+        self.isCurrencyPickerPresented = isCurrencyPickerPresented
     }
 
     var body: some View {
-        HStack(spacing: 16) {
+        // `alignment: .top` so currencySide + symbol stay anchored to
+        // the row's top edge as the TextField wraps to additional lines.
+        HStack(alignment: .top, spacing: 16) {
             currencySide
-            TextField("0.00", text: $amount)
+            Spacer(minLength: 0)
+            // `accessibilityHidden` so VoiceOver doesn't double-announce
+            // the currency alongside the field's label.
+            Text(currency.symbol)
+                .font(.body.weight(.bold))
+                .foregroundStyle(Color(.label))
+                .accessibilityHidden(true)
+            // Multi-line input — `axis: .vertical` + `lineLimit(1...)`
+            // lets the field grow vertically rather than overflow the
+            // row horizontally when the value is very long or Dynamic
+            // Type is at an accessibility size. The outer ScrollView
+            // absorbs anything taller than the screen.
+            TextField("0.00", text: $amount, axis: .vertical)
                 .keyboardType(.decimalPad)
+                // Trailing so the value anchors to the row's right
+                // edge; the symbol sits on the field's leading edge,
+                // creating a small gap when content is short and
+                // closing as content grows.
                 .multilineTextAlignment(.trailing)
                 .font(.body.weight(.bold))
                 .foregroundStyle(Color(.label))
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
+                .lineLimit(1...)
                 .accessibilityIdentifier(amountFieldIdentifier)
                 .accessibilityLabel(accessibilityAmountLabel)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
-        .frame(height: 66)
+        .frame(minHeight: 66)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
     }
 
     @ViewBuilder
     private var currencySide: some View {
+        // `lineLimit(1)` on the code text + `layoutPriority(1)` on the
+        // outer HStack keep the currency label intact at large Dynamic
+        // Type sizes — the multi-line TextField cluster yields width
+        // first instead.
         let content = HStack(spacing: 8) {
             Text(currency.flagEmoji)
                 .font(.system(size: 16))
             Text(currency.code)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(Color(.label))
+                .lineLimit(1)
             if isTappable {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color(.label))
             }
         }
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
 
-        if isTappable, let onTapCurrency {
-            let button = Button(action: onTapCurrency) {
+        if isTappable {
+            let button = Button {
+                // Always present — never toggle. The sheet drives its
+                // own dismissal, so toggling here could dismiss a sheet
+                // that was just opened.
+                isCurrencyPickerPresented?.wrappedValue = true
+            } label: {
                 content
             }
             .buttonStyle(.plain)
-            // Attach the identifier to the tappable Button so UI tests
-            // can locate it via `app.buttons["foreignCurrencyPicker"]`.
             if let id = currencyLabelIdentifier {
                 button.accessibilityIdentifier(id)
             } else {
@@ -104,6 +129,7 @@ struct CurrencyInputRow: View {
 #Preview {
     @Previewable @State var usdc = "1.00"
     @Previewable @State var foreign = "18.41"
+    @Previewable @State var pickerPresented: Bool = false
 
     VStack(spacing: 16) {
         CurrencyInputRow(
@@ -118,7 +144,7 @@ struct CurrencyInputRow: View {
             amount: $foreign,
             amountFieldIdentifier: "foreignAmountField",
             currencyLabelIdentifier: "foreignCurrencyPicker",
-            onTapCurrency: { }
+            isCurrencyPickerPresented: $pickerPresented
         )
     }
     .padding(.vertical)

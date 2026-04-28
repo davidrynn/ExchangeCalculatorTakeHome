@@ -13,6 +13,24 @@ final class CalculatorUITests: XCTestCase {
         return app
     }
 
+    /// App launched with a seeded fixed rate (bid=10, ask=20 on MXN) so
+    /// input-reflection assertions have a predictable multiplier.
+    @MainActor
+    private func makeAppWithSeededRate() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_SEED_RATE"]
+        return app
+    }
+
+    /// App launched with a service that throws on `fetchRates`, so the
+    /// error banner shows.
+    @MainActor
+    private func makeAppWithFailingRates() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_FAIL_RATES"]
+        return app
+    }
+
     @MainActor
     func testCalculatorLoads() {
         let app = makeApp()
@@ -32,6 +50,199 @@ final class CalculatorUITests: XCTestCase {
         let swap = app.buttons["swapButton"]
         XCTAssertTrue(swap.waitForExistence(timeout: 5))
         XCTAssertTrue(swap.isHittable)
+    }
+
+    @MainActor
+    func testUSDCInputUpdatesForeignField() {
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let usdcField = app.textFields["usdcAmountField"]
+        let foreignField = app.textFields["foreignAmountField"]
+        XCTAssertTrue(usdcField.waitForExistence(timeout: 5))
+
+        // Wait for the seeded rate to load so the conversion fires.
+        let rate = app.staticTexts["rateSummaryLabel"]
+        _ = rate.waitForExistence(timeout: 5)
+
+        usdcField.tap()
+        usdcField.typeText("2")
+
+        // Seeded bid = 10 → 2 USDc × 10 = 20 MXN, formatter shows
+        // 4 fractional digits min.
+        let foreignValue = foreignField.value as? String ?? ""
+        XCTAssertEqual(foreignValue, "20.0000",
+                       "Foreign field should reflect 2 × bid(10) = 20.0000")
+    }
+
+    @MainActor
+    func testForeignInputUpdatesUSDCField() {
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let usdcField = app.textFields["usdcAmountField"]
+        let foreignField = app.textFields["foreignAmountField"]
+        XCTAssertTrue(foreignField.waitForExistence(timeout: 5))
+
+        _ = app.staticTexts["rateSummaryLabel"].waitForExistence(timeout: 5)
+
+        foreignField.tap()
+        foreignField.typeText("40")
+
+        // Seeded ask = 20 → 40 MXN ÷ 20 = 2 USDc, formatted to 4dp min.
+        let usdcValue = usdcField.value as? String ?? ""
+        XCTAssertEqual(usdcValue, "2.0000",
+                       "USDc field should reflect 40 ÷ ask(20) = 2.0000")
+    }
+
+    @MainActor
+    func testNetworkErrorShowsErrorBanner() {
+        let app = makeAppWithFailingRates()
+        app.launch()
+
+        // The Retry button is unique to the error banner and is a
+        // reliably-queryable element. If it appears, the banner rendered.
+        let retry = app.buttons["errorRetry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5),
+                      "Error banner with Retry should appear when the service throws on fetchRates")
+        XCTAssertTrue(retry.isHittable)
+    }
+
+    @MainActor
+    func testTappingBackAndForthDoesNotChangeValues() {
+        // Reported bug: with values in both fields, tapping back and forth
+        // would change the numbers as SwiftUI's binding setter re-fired on
+        // focus events, flipping lastEditedSide and re-deriving via the
+        // asymmetric bid/ask spread. The idempotent guard in the setters
+        // prevents that. End-to-end live-binding regression.
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let usdcField = app.textFields["usdcAmountField"]
+        let foreignField = app.textFields["foreignAmountField"]
+        XCTAssertTrue(usdcField.waitForExistence(timeout: 5))
+        _ = app.staticTexts["rateSummaryLabel"].waitForExistence(timeout: 5)
+
+        // Type a value in USDc; foreign auto-fills from the seeded rate.
+        usdcField.tap()
+        usdcField.typeText("3")
+
+        let initialUSDc = (usdcField.value as? String) ?? ""
+        let initialForeign = (foreignField.value as? String) ?? ""
+        XCTAssertFalse(initialForeign.isEmpty)
+        XCTAssertNotEqual(initialForeign, "0.00")
+
+        // Tap back and forth several times — no edits, just focus moves.
+        for _ in 0..<4 {
+            foreignField.tap()
+            usdcField.tap()
+        }
+
+        let finalUSDc = (usdcField.value as? String) ?? ""
+        let finalForeign = (foreignField.value as? String) ?? ""
+        XCTAssertEqual(finalUSDc, initialUSDc,
+                       "USDc value should not drift on focus changes")
+        XCTAssertEqual(finalForeign, initialForeign,
+                       "Foreign value should not drift on focus changes")
+    }
+
+    @MainActor
+    func testRetryReTriggersLoadAndBannerReappears() {
+        let app = makeAppWithFailingRates()
+        app.launch()
+
+        let retry = app.buttons["errorRetry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        retry.tap()
+
+        // Tapping Retry clears errorMessage (banner disappears briefly),
+        // bumps the retry token → .task(id:) re-fires → service throws
+        // again → banner reappears. We can assert the banner is still
+        // present (or returns quickly) as proof that Retry reached the
+        // load path, not just that the view state cleared.
+        XCTAssertTrue(app.buttons["errorRetry"].waitForExistence(timeout: 5),
+                      "Retry should re-trigger the load; the banner should reappear when fetch fails again")
+    }
+
+    @MainActor
+    func testFreshnessLabelAppearsWithSeededRate() {
+        // Seeded service supplies a real API-shaped timestamp, so the
+        // freshness caption ("Updated X ago") should render under the
+        // rate summary.
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let freshness = app.staticTexts["rateFreshnessLabel"]
+        XCTAssertTrue(freshness.waitForExistence(timeout: 5),
+                      "Freshness label should render when the rate carries a parseable timestamp")
+    }
+
+    @MainActor
+    func testRefreshButtonAppearsAlongsideFreshness() {
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let refresh = app.buttons["rateRefreshButton"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5),
+                      "Refresh button should render alongside the freshness label")
+        XCTAssertTrue(refresh.isHittable,
+                      "Refresh button must be tappable, not just present")
+    }
+
+    /// Service that returns a *different* rate on each call (bid/ask
+    /// bumped per call number). Active when `-UITEST_INCREMENT_RATE` is
+    /// passed. Used here to prove that tapping refresh actually re-runs
+    /// the load — not just that the tap doesn't crash.
+    @MainActor
+    private func makeAppWithIncrementingRate() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_INCREMENT_RATE"]
+        return app
+    }
+
+    @MainActor
+    func testRefreshButtonReTriggersLoad() {
+        // Strong proof: under `-UITEST_INCREMENT_RATE` the service
+        // returns a fresh rate on every call, so the rate-summary label
+        // will *change* after a successful refresh cycle. If refresh
+        // were a no-op this assertion would fail.
+        let app = makeAppWithIncrementingRate()
+        app.launch()
+
+        let rateLabel = app.staticTexts["rateSummaryLabel"]
+        XCTAssertTrue(rateLabel.waitForExistence(timeout: 5))
+
+        let refresh = app.buttons["rateRefreshButton"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5))
+
+        let initialLabel = rateLabel.label
+        refresh.tap()
+
+        // Wait for the label to differ from the pre-tap value. If the
+        // refresh path didn't actually run, the predicate stays false
+        // and the wait times out → test fails.
+        let predicate = NSPredicate(format: "label != %@", initialLabel)
+        let exp = XCTNSPredicateExpectation(predicate: predicate, object: rateLabel)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [exp], timeout: 5),
+            .completed,
+            "Rate summary should update after refresh — proves loadRates re-ran"
+        )
+    }
+
+    @MainActor
+    func testFreshnessAndRefreshHiddenWhenNoRate() {
+        // -UITEST_DISABLE_NETWORK: no rate ever loads. The freshness
+        // label + refresh button live inside `if let rate.publishedAt`
+        // so neither should render when there's no rate.
+        let app = makeApp()
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["exchangeTitle"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["rateFreshnessLabel"].exists,
+                       "Freshness label should not render when no rate is loaded")
+        XCTAssertFalse(app.buttons["rateRefreshButton"].exists,
+                       "Refresh button should not render when no rate is loaded")
     }
 
     @MainActor

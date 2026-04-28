@@ -14,9 +14,19 @@ struct CurrencyPickerSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    /// Currencies sorted A→Z by ISO code so the user can scan the list
+    /// predictably regardless of the order the API (or fallback) returned.
+    /// `localizedStandardCompare` keeps mixed-case codes like `EURc`
+    /// alongside `EUR` instead of pushed to the end of the alphabet.
+    private var sortedCurrencies: [Currency] {
+        currencies.sorted {
+            $0.code.localizedStandardCompare($1.code) == .orderedAscending
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            List(currencies) { currency in
+            List(sortedCurrencies) { currency in
                 Button {
                     selectedCurrency = currency
                     dismiss()
@@ -28,13 +38,24 @@ struct CurrencyPickerSheet: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("currencyPickerRow.\(currency.code)")
+                .listRowBackground(Color.white)
             }
-            .navigationTitle("Select currency")
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.white)
+            .navigationTitle("Choose currency")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Cancel") { dismiss() }
-                        .accessibilityIdentifier("currencyPickerCancel")
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Color(hex: 0x2C2C2E))
+                    }
+                    .accessibilityLabel("Close")
+                    .accessibilityIdentifier("currencyPickerCancel")
                 }
             }
         }
