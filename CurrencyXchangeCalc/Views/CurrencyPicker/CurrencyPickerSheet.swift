@@ -14,9 +14,19 @@ struct CurrencyPickerSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    /// Currencies sorted A→Z by ISO code so the user can scan the list
+    /// predictably regardless of the order the API (or fallback) returned.
+    /// `localizedStandardCompare` keeps mixed-case codes like `EURc`
+    /// alongside `EUR` instead of pushed to the end of the alphabet.
+    private var sortedCurrencies: [Currency] {
+        currencies.sorted {
+            $0.code.localizedStandardCompare($1.code) == .orderedAscending
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            List(currencies) { currency in
+            List(sortedCurrencies) { currency in
                 Button {
                     selectedCurrency = currency
                     dismiss()

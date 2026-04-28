@@ -174,7 +174,7 @@ struct ExchangeCalculatorViewModelTests {
     @Test
     func esESLocaleFormatsWithComma() {
         let spain = Locale(identifier: "es_ES")
-        let formatted = ExchangeCalculatorViewModel.format(Decimal(string: "1.23")!, locale: spain)
+        let formatted = Decimal(string: "1.23")!.formattedAsAmount(locale: spain)
         #expect(formatted == "1,2300")
     }
 
@@ -182,7 +182,7 @@ struct ExchangeCalculatorViewModelTests {
     func enUSLocaleParsesAndFormatsWithDot() {
         let us = Locale(identifier: "en_US")
         #expect(ExchangeCalculatorViewModel.parse("1.23", locale: us) == Decimal(string: "1.23")!)
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.23")!, locale: us) == "1.2300")
+        #expect(Decimal(string: "1.23")!.formattedAsAmount(locale: us) == "1.2300")
     }
 
     // MARK: - Display precision (4...8 fractional digits)
@@ -190,27 +190,24 @@ struct ExchangeCalculatorViewModelTests {
     @Test
     func formatZeroPadsToFourDp() {
         let us = Locale(identifier: "en_US")
-        #expect(ExchangeCalculatorViewModel.format(Decimal.zero, locale: us) == "0.0000")
+        #expect(Decimal.zero.formattedAsAmount(locale: us) == "0.0000")
     }
 
     @Test
     func formatTruncatesAtMaxEightDp() {
         // 1.234567890 has 9 fractional digits — formatter rounds to 8.
         let us = Locale(identifier: "en_US")
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1.234567890")!, locale: us)
+        #expect(Decimal(string: "1.234567890")!.formattedAsAmount(locale: us)
                 == "1.23456789")
         // Whole numbers pad to the 4-digit minimum.
-        #expect(ExchangeCalculatorViewModel.format(Decimal(string: "1")!, locale: us) == "1.0000")
+        #expect(Decimal(string: "1")!.formattedAsAmount(locale: us) == "1.0000")
     }
 
     @Test
     func formatTinyValueRevealsSignificantDigits() {
         // 0.000645 fits in 4...8; previously 2dp would have rendered "0.00".
         let us = Locale(identifier: "en_US")
-        let formatted = ExchangeCalculatorViewModel.format(
-            Decimal(string: "0.000645")!,
-            locale: us
-        )
+        let formatted = Decimal(string: "0.000645")!.formattedAsAmount(locale: us)
         #expect(formatted == "0.000645",
                 "Expected full-precision output, got \(formatted)")
     }
@@ -225,14 +222,14 @@ struct ExchangeCalculatorViewModelTests {
         let mxnAsk = Decimal(string: "17.3625")!
         let mxnBid = Decimal(string: "17.3589")!
         let usdc = 1 / mxnAsk
-        let displayed = ExchangeCalculatorViewModel.format(usdc, locale: us)
+        let displayed = usdc.formattedAsAmount(locale: us)
         // Should look like "0.0576" — 4 fractional digits, non-zero
         #expect(displayed.hasPrefix("0.05"), "Got \(displayed)")
 
         // Round-trip: type the displayed value back into USDc, multiply by bid.
         let parsedBack = ExchangeCalculatorViewModel.parse(displayed, locale: us)!
         let returned = parsedBack * mxnBid
-        let returnedString = ExchangeCalculatorViewModel.format(returned, locale: us)
+        let returnedString = returned.formattedAsAmount(locale: us)
         // Should be very close to "1.0000" — within 1% of the original 1 MXN.
         #expect(returnedString.hasPrefix("0.99") || returnedString.hasPrefix("1.00"),
                 "Round-trip drifted too far: \(returnedString)")
@@ -241,10 +238,7 @@ struct ExchangeCalculatorViewModelTests {
     @Test
     func formatNegativeTinyValueAlsoExtends() {
         let us = Locale(identifier: "en_US")
-        let formatted = ExchangeCalculatorViewModel.format(
-            Decimal(string: "-0.000645")!,
-            locale: us
-        )
+        let formatted = Decimal(string: "-0.000645")!.formattedAsAmount(locale: us)
         #expect(formatted == "-0.000645",
                 "Expected extended precision for negative tiny, got \(formatted)")
     }

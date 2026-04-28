@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// A single row in the currency picker list.
+/// A single row in the currency picker list — flag + ISO code, with a
+/// trailing selection indicator.
 ///
 /// Pure presentation — `isSelected` is passed in by the parent
 /// (`CurrencyPickerSheet`), which owns the selection state. A row is
@@ -19,14 +20,9 @@ struct CurrencyPickerRow: View {
         HStack(spacing: 12) {
             Text(currency.flagEmoji)
                 .font(.system(size: 22))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(currency.code)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Color(hex: 0x2C2C2E))
-                Text(currency.displayName)
-                    .font(.caption)
-                    .foregroundStyle(Color(hex: 0x949494))
-            }
+            Text(currency.code)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Color(hex: 0x2C2C2E))
             Spacer()
             selectionIndicator
         }

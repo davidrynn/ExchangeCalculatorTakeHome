@@ -12,8 +12,9 @@ private struct NoopUITestService: ExchangeRateServiceProtocol {
     }
 }
 
-/// UI-test service that returns a fixed MXN rate so input-reflection
-/// tests have a predictable multiplier. Active when
+/// UI-test service returning a fixed MXN rate (bid=10, ask=20) with a
+/// real API-shaped timestamp so input-reflection tests get predictable
+/// math AND the freshness label / refresh button render. Active when
 /// `-UITEST_SEED_RATE` is passed.
 private struct SeededRateUITestService: ExchangeRateServiceProtocol {
     func fetchRates(for currencies: [String]) async throws -> [ExchangeRate] {
@@ -22,7 +23,7 @@ private struct SeededRateUITestService: ExchangeRateServiceProtocol {
                 ask: Decimal(string: "20")!,
                 bid: Decimal(string: "10")!,
                 book: "usdc_mxn",
-                date: ""
+                date: "2025-10-20T20:14:57.361483956"
             )
         ]
     }
@@ -42,6 +43,38 @@ private struct FailingRatesUITestService: ExchangeRateServiceProtocol {
     }
 }
 
+/// Actor wrapper so the service below can stay `Sendable` while
+/// mutating call-count state.
+private actor RateCallCounter {
+    private var count: Int = 0
+    func next() -> Int {
+        count += 1
+        return count
+    }
+}
+
+/// UI-test service returning a *different* rate on each call (bid/ask
+/// bumped per call number) so a test can prove the refresh button
+/// actually re-ran the load — the visible rate label changes between
+/// calls. Active when `-UITEST_INCREMENT_RATE` is passed.
+private final class IncrementingRateUITestService: ExchangeRateServiceProtocol {
+    private let counter = RateCallCounter()
+    func fetchRates(for currencies: [String]) async throws -> [ExchangeRate] {
+        let n = await counter.next()
+        return [
+            ExchangeRate(
+                ask: Decimal(20 + n),
+                bid: Decimal(10 + n),
+                book: "usdc_mxn",
+                date: "2025-10-20T20:14:57.361483956"
+            )
+        ]
+    }
+    func fetchCurrencies() async throws -> [String] {
+        Currency.fallbackList.map(\.code)
+    }
+}
+
 @main
 struct CurrencyXchangeCalcApp: App {
     /// Composition root. Owns the live service and builds the top-level
@@ -54,6 +87,8 @@ struct CurrencyXchangeCalcApp: App {
         let service: ExchangeRateServiceProtocol
         if args.contains("-UITEST_FAIL_RATES") {
             service = FailingRatesUITestService()
+        } else if args.contains("-UITEST_INCREMENT_RATE") {
+            service = IncrementingRateUITestService()
         } else if args.contains("-UITEST_SEED_RATE") {
             service = SeededRateUITestService()
         } else if args.contains("-UITEST_DISABLE_NETWORK") {

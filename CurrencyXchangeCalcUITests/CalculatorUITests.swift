@@ -165,6 +165,87 @@ final class CalculatorUITests: XCTestCase {
     }
 
     @MainActor
+    func testFreshnessLabelAppearsWithSeededRate() {
+        // Seeded service supplies a real API-shaped timestamp, so the
+        // freshness caption ("Updated X ago") should render under the
+        // rate summary.
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let freshness = app.staticTexts["rateFreshnessLabel"]
+        XCTAssertTrue(freshness.waitForExistence(timeout: 5),
+                      "Freshness label should render when the rate carries a parseable timestamp")
+    }
+
+    @MainActor
+    func testRefreshButtonAppearsAlongsideFreshness() {
+        let app = makeAppWithSeededRate()
+        app.launch()
+
+        let refresh = app.buttons["rateRefreshButton"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5),
+                      "Refresh button should render alongside the freshness label")
+        XCTAssertTrue(refresh.isHittable,
+                      "Refresh button must be tappable, not just present")
+    }
+
+    /// Service that returns a *different* rate on each call (bid/ask
+    /// bumped per call number). Active when `-UITEST_INCREMENT_RATE` is
+    /// passed. Used here to prove that tapping refresh actually re-runs
+    /// the load — not just that the tap doesn't crash.
+    @MainActor
+    private func makeAppWithIncrementingRate() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments += ["-UITEST_INCREMENT_RATE"]
+        return app
+    }
+
+    @MainActor
+    func testRefreshButtonReTriggersLoad() {
+        // Strong proof: under `-UITEST_INCREMENT_RATE` the service
+        // returns a fresh rate on every call, so the rate-summary label
+        // will *change* after a successful refresh cycle. If refresh
+        // were a no-op this assertion would fail.
+        let app = makeAppWithIncrementingRate()
+        app.launch()
+
+        let rateLabel = app.staticTexts["rateSummaryLabel"]
+        XCTAssertTrue(rateLabel.waitForExistence(timeout: 5))
+
+        let refresh = app.buttons["rateRefreshButton"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5))
+
+        let initialLabel = rateLabel.label
+        refresh.tap()
+
+        // Wait for the label to differ from the pre-tap value. If the
+        // refresh path didn't actually run, the predicate stays false
+        // and the wait times out → test fails.
+        let predicate = NSPredicate(format: "label != %@", initialLabel)
+        let exp = XCTNSPredicateExpectation(predicate: predicate, object: rateLabel)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [exp], timeout: 5),
+            .completed,
+            "Rate summary should update after refresh — proves loadRates re-ran"
+        )
+    }
+
+    @MainActor
+    func testFreshnessAndRefreshHiddenWhenNoRate() {
+        // -UITEST_DISABLE_NETWORK: no rate ever loads. The freshness
+        // label + refresh button live inside `if let rate.publishedAt`
+        // so neither should render when there's no rate.
+        let app = makeApp()
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["exchangeTitle"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["rateFreshnessLabel"].exists,
+                       "Freshness label should not render when no rate is loaded")
+        XCTAssertFalse(app.buttons["rateRefreshButton"].exists,
+                       "Refresh button should not render when no rate is loaded")
+    }
+
+    @MainActor
     func testSwapButtonSwapsRowPositions() {
         let app = makeApp()
         app.launch()

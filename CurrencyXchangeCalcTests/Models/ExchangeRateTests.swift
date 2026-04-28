@@ -102,4 +102,82 @@ struct ExchangeRateTests {
             try JSONDecoder().decode([ExchangeRate].self, from: badJSON)
         }
     }
+
+    /// API-shaped timestamp (9 fractional digits, no timezone) parses as
+    /// UTC. Pinned to a specific instant so the test is timezone-agnostic.
+    @Test
+    func publishedAtParsesAPIFormatAsUTC() {
+        let rate = ExchangeRate(
+            ask: 1, bid: 1, book: "usdc_mxn",
+            date: "2025-10-20T20:14:57.361483956"
+        )
+        let expected = DateComponents(
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(identifier: "UTC"),
+            year: 2025, month: 10, day: 20,
+            hour: 20, minute: 14, second: 57
+        ).date
+        #expect(rate.publishedAt == expected)
+    }
+
+    @Test
+    func publishedAtNilForEmptyDate() {
+        let rate = ExchangeRate(ask: 1, bid: 1, book: "usdc_mxn", date: "")
+        #expect(rate.publishedAt == nil)
+    }
+
+    @Test
+    func publishedAtNilForMalformedDate() {
+        let rate = ExchangeRate(ask: 1, bid: 1, book: "usdc_mxn", date: "not-a-date")
+        #expect(rate.publishedAt == nil)
+    }
+
+    /// Belt-and-braces: a timestamp with no sub-second part should still
+    /// parse. The split-on-`.` step yields the full string when no dot is
+    /// present, so the formatter sees a clean `yyyy-MM-dd'T'HH:mm:ss`.
+    @Test
+    func publishedAtParsesTimestampWithoutFractionalSeconds() {
+        let rate = ExchangeRate(
+            ask: 1, bid: 1, book: "usdc_mxn",
+            date: "2025-10-20T20:14:57"
+        )
+        let expected = DateComponents(
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(identifier: "UTC"),
+            year: 2025, month: 10, day: 20,
+            hour: 20, minute: 14, second: 57
+        ).date
+        #expect(rate.publishedAt == expected)
+    }
+
+    /// Date-only payloads (e.g. `"2025-10-20"`) are not considered a
+    /// publishable timestamp — there's no time component, so we can't
+    /// honour the documented UTC instant contract. Returning `nil` keeps
+    /// the freshness label hidden rather than rendering a midnight-UTC
+    /// guess.
+    @Test
+    func publishedAtNilForDateOnly() {
+        let rate = ExchangeRate(ask: 1, bid: 1, book: "usdc_mxn", date: "2025-10-20")
+        #expect(rate.publishedAt == nil)
+    }
+
+    /// Locks the current permissive behavior: anything after the first
+    /// `.` is treated as the fractional-seconds region and dropped. The
+    /// prefix `2025-10-20T20:14:57` still parses, so trailing junk does
+    /// not block freshness display. If we ever want strict rejection,
+    /// this test will fail and force the conversation.
+    @Test
+    func publishedAtParsesPrefixWhenTrailingFractionalIsJunk() {
+        let rate = ExchangeRate(
+            ask: 1, bid: 1, book: "usdc_mxn",
+            date: "2025-10-20T20:14:57.bogus"
+        )
+        let expected = DateComponents(
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(identifier: "UTC"),
+            year: 2025, month: 10, day: 20,
+            hour: 20, minute: 14, second: 57
+        ).date
+        #expect(rate.publishedAt == expected)
+    }
 }

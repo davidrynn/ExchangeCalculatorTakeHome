@@ -16,6 +16,24 @@ nonisolated struct Currency: Identifiable, Hashable, Sendable {
 
     var id: String { code }
 
+    /// Locale-aware narrow currency symbol (`"MXN" → "$"`, `"BRL" → "R$"`).
+    /// Disambiguation is provided by the ISO code shown next to it in
+    /// the row. USD-pegged stablecoins inherit `"$"`; truly unknown
+    /// codes fall back to the code itself rather than guessing.
+    var symbol: String {
+        let formatted = Decimal(0).formatted(
+            .currency(code: code)
+                .presentation(.narrow)
+                .precision(.fractionLength(0))
+        )
+        let stripped = formatted
+            .filter { !$0.isNumber }
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stripped.isEmpty && stripped != code { return stripped }
+        if code.uppercased().hasPrefix("USD") { return "$" }
+        return code
+    }
+
     /// Hardcoded fallback used when the `tickers-currencies` API is unavailable.
     ///
     /// Mirrors the spec's example response (`/v1/tickers-currencies`

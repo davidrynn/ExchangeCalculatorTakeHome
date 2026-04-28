@@ -23,7 +23,7 @@ final class ExchangeCalculatorViewModel {
     /// User-visible USDc amount string (what the USDc `TextField` binds to).
     /// Holds either what the user typed (raw) or a freshly-formatted
     /// computed value. Authoritative numeric value lives in
-    /// `usdcDecimal`; never re-clamped or re-parsed from this string.
+    /// `usdcDecimal`; never re-clamped or re-parsed from this string. See "Edge Cases" in ReadMe.
     var usdcAmount: String = ""
 
     /// User-visible foreign amount string. See `usdcAmount` notes —
@@ -172,7 +172,7 @@ final class ExchangeCalculatorViewModel {
         guard let usdc = usdcDecimal, let rate = currentRate else { return }
         let result = usdc * rate.bid
         foreignDecimal = result
-        foreignAmount = Self.format(result)
+        foreignAmount = result.formattedAsAmount()
     }
 
     private func recomputeUsdcFromForeign() {
@@ -181,7 +181,7 @@ final class ExchangeCalculatorViewModel {
               rate.ask != 0 else { return }
         let result = foreign / rate.ask
         usdcDecimal = result
-        usdcAmount = Self.format(result)
+        usdcAmount = result.formattedAsAmount()
     }
 
     // MARK: - Commands
@@ -194,16 +194,12 @@ final class ExchangeCalculatorViewModel {
         isSwapped.toggle()
     }
 
-    /// Sets the selected foreign currency and invalidates any stale rate.
-    ///
-    /// Does not trigger a network fetch — that is driven by the view's
-    /// `.task(id: selectedCurrency.code)` in Phase 5. When the selected
-    /// currency changes to a different code, we clear `currentRate` and
-    /// `foreignAmount` so the UI cannot render a conversion derived from
-    /// the prior currency's rate. The USDc amount stays sticky so the
-    /// user's intent is preserved across currency switches.
-    ///
-    /// - Parameter currency: the newly selected foreign currency.
+    /// Sets the selected foreign currency and invalidates any stale
+    /// rate. Does not trigger a network fetch — that's driven by the
+    /// view's `.task(id:)`. When the code changes we clear
+    /// `currentRate` and `foreignAmount` so the UI cannot render a
+    /// conversion derived from the prior currency's rate. The USDc
+    /// amount stays sticky so the user's intent survives the switch.
     func selectCurrency(_ currency: Currency) {
         selectedCurrency = currency
         if let rate = currentRate, rate.currencyCode != currency.code {
@@ -402,40 +398,6 @@ final class ExchangeCalculatorViewModel {
         return sawDigit
     }
 
-    /// Formats a `Decimal` for display in the amount fields.
-    ///
-    /// Always shows **between 4 and 8 fractional digits**. Value-type
-    /// formatter, inherently `Sendable` — safe to use from any
-    /// isolation, unlike a shared `NumberFormatter`.
-    ///
-    /// **Why this range — round-trip precision (the edge case):**
-    ///
-    /// At 2dp, `1 MXN ÷ ask(17.36) ≈ 0.05761` USDc displays as `"0.06"`.
-    /// The user re-types `0.06` in USDc and gets `0.06 × bid(17.34) ≈
-    /// 1.04 MXN` back, ~4% off from where they started. That looks like
-    /// a calculator bug.
-    ///
-    /// Bumping the minimum to 4 digits keeps `0.0576` USDc visible, and
-    /// re-entering it round-trips back to within 0.2% of the original
-    /// (the residual loss is the unavoidable bid/ask spread). Matches
-    /// how XE, Google's currency widget, and other exchange calculators
-    /// format. The `…8` upper bound lets currencies with a wide
-    /// USDc-to-foreign ratio (e.g. ARS at ask ≈ 1551 → 0.000645 USDc/peso)
-    /// still render meaningful significant digits.
-    ///
-    /// **Why not the alternative** (track a precise underlying `Decimal`
-    /// per field, display only 2dp): introduces parallel state where
-    /// the displayed value no longer reflects what the VM actually
-    /// holds, and adds complexity for marginal UX gain. The simpler
-    /// "show more digits" approach matches industry convention with no
-    /// extra state.
-    static func format(_ value: Decimal, locale: Locale = .current) -> String {
-        value.formatted(
-            .number
-                .precision(.fractionLength(4...8))
-                .locale(locale)
-        )
-    }
 }
 
 private extension Decimal {
