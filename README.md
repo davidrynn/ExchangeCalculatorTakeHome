@@ -168,3 +168,9 @@ Manual decisions and verification covered layout/UX iteration in the simulator, 
 
 - **Manual rate refresh** — A small refresh button beside the "Updated X ago" caption lets the user pull a fresh rate without changing currency or relying on the error-banner Retry. Implemented by reusing the `retryToken` already wired into the rate-load `.task(id:)` key, so the new affordance shares the same structured-cancellation guarantees as every other rate-load entry point.
 
+## Known limitations
+
+- **Dynamic Type at the largest accessibility sizes.** The screen now scrolls (top-level `ScrollView`) and the title uses semantic `.largeTitle` so it scales with Dynamic Type. **Not yet handled:** the input rows are still single-line — at the largest accessibility text sizes a long value's symbol + digits cluster can grow wider than the row's available trailing region and clip at the edge. Full fix would change the `TextField` to `axis: .vertical` with `.lineLimit(1...3)` so the cluster wraps, relax `.frame(height: 66)` to a `minHeight`, and add `.layoutPriority(1)` to the currency-side label so it never gets compressed; estimated 2–3 hours including UI-test layout updates (the swap test asserts row Y positions, which would change once rows can grow). Not blocking for the default-size experience or for typical accessibility sizes.
+
+- **Very long input values overflow the row.** Same root cause: the cluster (`.fixedSize`'d for the symbol-glued layout) grows leftward as the user types and at extreme lengths (≈ 14+ digits at default Dynamic Type) eventually bumps the currency-side label or clips. Acceptable for typical currency amounts; a `minimumScaleFactor(0.6)` + capped `.frame(maxWidth:)` strategy was tried and rejected because it scaled too eagerly at default sizes. The honest fix is the same multi-line input above.
+

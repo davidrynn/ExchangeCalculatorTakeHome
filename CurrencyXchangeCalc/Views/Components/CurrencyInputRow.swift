@@ -39,7 +39,9 @@ struct CurrencyInputRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 16) {
+        // `alignment: .top` so currencySide + symbol stay anchored to
+        // the row's top edge as the TextField wraps to additional lines.
+        HStack(alignment: .top, spacing: 16) {
             currencySide
             Spacer(minLength: 0)
             // `accessibilityHidden` so VoiceOver doesn't double-announce
@@ -48,37 +50,51 @@ struct CurrencyInputRow: View {
                 .font(.body.weight(.bold))
                 .foregroundStyle(Color(.label))
                 .accessibilityHidden(true)
-            TextField("0.00", text: $amount)
+            // Multi-line input — `axis: .vertical` + `lineLimit(1...)`
+            // lets the field grow vertically rather than overflow the
+            // row horizontally when the value is very long or Dynamic
+            // Type is at an accessibility size. The outer ScrollView
+            // absorbs anything taller than the screen.
+            TextField("0.00", text: $amount, axis: .vertical)
                 .keyboardType(.decimalPad)
-                .multilineTextAlignment(.leading)
+                // Trailing so the value anchors to the row's right
+                // edge; the symbol sits on the field's leading edge,
+                // creating a small gap when content is short and
+                // closing as content grows.
+                .multilineTextAlignment(.trailing)
                 .font(.body.weight(.bold))
                 .foregroundStyle(Color(.label))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+                .lineLimit(1...)
                 .accessibilityIdentifier(amountFieldIdentifier)
                 .accessibilityLabel(accessibilityAmountLabel)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
-        .frame(height: 66)
+        .frame(minHeight: 66)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
     }
 
     @ViewBuilder
     private var currencySide: some View {
+        // `lineLimit(1)` on the code text + `layoutPriority(1)` on the
+        // outer HStack keep the currency label intact at large Dynamic
+        // Type sizes — the multi-line TextField cluster yields width
+        // first instead.
         let content = HStack(spacing: 8) {
             Text(currency.flagEmoji)
                 .font(.system(size: 16))
             Text(currency.code)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(Color(.label))
+                .lineLimit(1)
             if isTappable {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color(.label))
             }
         }
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
 
         if isTappable {

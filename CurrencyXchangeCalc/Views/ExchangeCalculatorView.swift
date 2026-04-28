@@ -41,12 +41,18 @@ struct ExchangeCalculatorView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { Self.dismissKeyboard() }
 
-            VStack(alignment: .leading, spacing: 24) {
-                header
-                amountStack
-                Spacer()
+            // ScrollView so the content can grow vertically at large
+            // Dynamic Type sizes without pushing the rate summary or
+            // input rows off-screen.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    amountStack
+                }
+                .padding(.top, 24)
             }
-            .padding(.top, 24)
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.interactively)
 
             if let message = viewModel.errorMessage {
                 errorBanner(message: message)
@@ -95,7 +101,7 @@ struct ExchangeCalculatorView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Exchange calculator")
-                .font(.system(size: 30, weight: .bold))
+                .font(.largeTitle.bold())
                 .foregroundStyle(Color(hex: 0x2C2C2E))
                 .accessibilityIdentifier("exchangeTitle")
 
